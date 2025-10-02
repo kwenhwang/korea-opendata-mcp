@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "hrfco-water-data-ts": {
+      "command": "node",
+      "args": ["/home/ubuntu/hrfco-mcp-ts/dist/mcp-server.js"],
+      "env": {
+        "HRFCO_API_KEY": "${HRFCO_API_KEY}"
+      }
+    }
+  },
+  "description": "HRFCO 수위 데이터 MCP 서버 - 통합 검색 및 실시간 데이터 조회 기능 포함",
+  "tools": {
+    "get_water_info": {
+      "description": "관측소 검색 및 실시간 수위 데이터 통합 조회 (ChatGPT 무한 반복 방지용)",
+      "usage": "대청댐, 한강대교, 소양댐 등 관측소명으로 검색하면 실시간 수위 정보를 완전한 형태로 제공합니다."
+    }
+  }
+}

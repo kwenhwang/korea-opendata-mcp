@@ -1,0 +1,26 @@
+{
+  "name": "hrfco-mcp-server",
+  "version": "1.0.0",
+  "description": "HRFCO MCP Server in TypeScript",
+  "main": "api/mcp.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "tsc && npm run build:netlify",
+    "build:netlify": "mkdir -p dist/netlify/functions && cp -r netlify/functions/* dist/netlify/functions/",
+    "deploy": "vercel --prod",
+    "deploy:netlify": "netlify deploy --prod"
+  },
+  "dependencies": {
+    "@netlify/functions": "^2.0.0",
+    "@vercel/node": "^3.0.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0",
+    "vercel": "^32.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
