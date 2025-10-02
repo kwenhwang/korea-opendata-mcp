@@ -152,10 +152,16 @@ export class HRFCOAPIClient {
         throw new Error(`관측소 ${obsCode}의 데이터를 찾을 수 없습니다`);
       }
 
+      // 실제 데이터가 있는지 검증 (비어있거나 유효하지 않은 값 제외)
+      const waterLevel = parseFloat(stationData.wl);
+      if (isNaN(waterLevel) || stationData.wl === "" || stationData.wl === " ") {
+        throw new Error(`관측소 ${obsCode}의 수위 데이터가 유효하지 않습니다`);
+      }
+
       return [{
         obs_code: obsCode,
         obs_time: stationData.ymdhm || new Date().toISOString(),
-        water_level: parseFloat(stationData.wl) || 0,
+        water_level: waterLevel,
         unit: 'm',
       }];
     } catch (error) {
@@ -178,10 +184,16 @@ export class HRFCOAPIClient {
         throw new Error(`관측소 ${obsCode}의 강우량 데이터를 찾을 수 없습니다`);
       }
 
+      // 실제 데이터가 있는지 검증
+      const rainfall = parseFloat(stationData.rf);
+      if (isNaN(rainfall)) {
+        throw new Error(`관측소 ${obsCode}의 강우량 데이터가 유효하지 않습니다`);
+      }
+
       return [{
         obs_code: obsCode,
         obs_time: stationData.ymdhm || new Date().toISOString(),
-        rainfall: parseFloat(stationData.rf) || 0,
+        rainfall: rainfall,
         unit: 'mm',
       }];
     } catch (error) {
