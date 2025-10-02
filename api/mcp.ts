@@ -1,91 +1,76 @@
-import type { Handler } from '@netlify/functions';
-import { MCPHandler } from '../src/lib/mcp-handler';
-import { MCPRequest } from '../src/lib/types';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { MCPHandler } from '../dist/lib/mcp-handler';
+import { MCPRequest } from '../dist/lib/types';
 
-const handler = new MCPHandler();
+const mcpHandler = new MCPHandler();
 
-const mcp: Handler = async (event) => {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   // CORS 헤더 설정
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-    'Content-Type': 'application/json',
-  };
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Content-Type', 'application/json');
 
-  if (event.httpMethod === 'OPTIONS') {
-    return {
-      statusCode: 200,
-      headers,
-      body: '',
-    };
+  // OPTIONS 요청 처리
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
   }
 
-  if (event.httpMethod === 'GET') {
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify({
-        message: 'HRFCO MCP Server (TypeScript)',
-        version: '1.0.0',
-        endpoints: {
-          mcp: '/.netlify/functions/mcp',
-          health: '/.netlify/functions/health',
-        },
-      }),
-    };
+  // GET 요청 처리 (헬스체크)
+  if (req.method === 'GET') {
+    res.status(200).json({
+      message: 'HRFCO MCP Server (TypeScript) - Vercel',
+      version: '1.0.0',
+      endpoints: {
+        mcp: '/api/mcp',
+        health: '/api/health',
+      },
+      features: [
+        '통합 검색 기능 (get_water_info)',
+        'ChatGPT 무한 반복 호출 방지',
+        '실시간 수위 데이터 조회',
+        '관측소 코드 매핑'
+      ]
+    });
+    return;
   }
 
-  if (event.httpMethod !== 'POST') {
-    return {
-      statusCode: 405,
-      headers,
-      body: JSON.stringify({ error: 'Method not allowed' }),
-    };
+  // POST 요청 처리
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
   }
 
   try {
-    const mcpRequest: MCPRequest = JSON.parse(event.body || '{}');
+    const mcpRequest: MCPRequest = req.body;
 
     // 요청 검증
     if (!mcpRequest.jsonrpc || !mcpRequest.method) {
-      return {
-        statusCode: 400,
-        headers,
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: mcpRequest.id || null,
-          error: {
-            code: -32600,
-            message: 'Invalid Request',
-          },
-        }),
-      };
+      res.status(400).json({
+        jsonrpc: '2.0',
+        id: mcpRequest.id || null,
+        error: {
+          code: -32600,
+          message: 'Invalid Request',
+        },
+      });
+      return;
     }
 
-    const response = await handler.handleRequest(mcpRequest);
-    return {
-      statusCode: 200,
-      headers,
-      body: JSON.stringify(response),
-    };
+    const response = await mcpHandler.handleRequest(mcpRequest);
+    res.status(200).json(response);
 
   } catch (error) {
     console.error('MCP Handler Error:', error);
 
-    return {
-      statusCode: 500,
-      headers,
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: null,
-        error: {
-          code: -32603,
-          message: 'Internal error',
-        },
-      }),
-    };
+    res.status(500).json({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: -32603,
+        message: 'Internal error',
+      },
+    });
   }
-};
-
-export default mcp;
+}

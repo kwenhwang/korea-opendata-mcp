@@ -124,7 +124,7 @@ export class StationManager {
   async getByCode(code: string): Promise<StationInfo | null> {
     await this.fetchAllStations();
     
-    for (const [type, stations] of this.stationCache.entries()) {
+    for (const [type, stations] of Array.from(this.stationCache.entries())) {
       const station = stations.find(s => s.code === code);
       if (station) {
         return station;

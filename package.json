@@ -4,14 +4,13 @@
   "description": "HRFCO MCP Server in TypeScript",
   "main": "api/mcp.js",
   "scripts": {
-    "dev": "npm run build && netlify dev",
+    "dev": "npx vercel dev",
     "build": "npx tsc",
-    "build:netlify": "mkdir -p dist/netlify/functions && cp dist/netlify/functions/*.js dist/netlify/functions/ && cp -r dist/src dist/netlify/functions/",
-    "deploy:netlify": "netlify deploy --prod"
+    "deploy": "npx vercel --prod"
   },
   "dependencies": {
-    "@netlify/functions": "^2.0.0",
     "@types/express": "^5.0.3",
+    "@vercel/node": "^5.3.24",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "zod": "^3.22.4"

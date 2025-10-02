@@ -4,14 +4,15 @@
     "module": "commonjs",
     "lib": ["ES2022"],
     "outDir": "./dist",
-    "rootDir": "./",
+    "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "downlevelIteration": true
   },
-  "include": ["src/**/*", "api/**/*", "netlify/functions/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/lib/**/*"],
+  "exclude": ["node_modules", "dist", "api"]
 }
