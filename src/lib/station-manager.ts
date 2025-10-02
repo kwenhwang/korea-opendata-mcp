@@ -32,32 +32,40 @@ export class StationManager {
    */
   private async fetchAllStations(): Promise<void> {
     const now = Date.now();
-    
+
     // 캐시가 유효하면 스킵
     if (this.lastFetchTime && (now - this.lastFetchTime) < this.CACHE_DURATION) {
       return;
     }
 
     console.log('🔄 관측소 목록 갱신 중...');
-    
-    // API 엔드포인트별로 데이터 수집
-    const endpoints = [
-      { type: 'dam' as const, endpoint: 'dam/list.json' },           // 댐 목록
-      { type: 'waterlevel' as const, endpoint: 'waterlevel/list.json' }, // 수위관측소
-      { type: 'rainfall' as const, endpoint: 'rainfall/list.json' }    // 우량관측소
-    ];
-    
-    for (const { type, endpoint } of endpoints) {
+
+    // 각 타입별로 관측소 정보 수집 (이름 정보를 위해 getObservatories 사용)
+    const types = ['waterlevel', 'rainfall', 'dam'] as const;
+
+    for (const type of types) {
       try {
-        const stations = await this.client.getStationList(endpoint);
-        const stationInfos: StationInfo[] = stations.map(station => ({
-          code: station.obs_code || station.damcode || station.wl_obs_code || station.rf_obs_code,
-          name: station.obs_name || station.damnm || station.wl_obs_name || station.rf_obs_name,
+        let hydroType = type;
+        if (type === 'dam') hydroType = 'dam';  // 댐은 그대로 사용
+
+        const observatories = await this.client.getObservatories(type === 'dam' ? 'dam' : type);
+
+        // 타입별로 필터링
+        const typeObservatories = observatories.filter(obs => {
+          if (type === 'waterlevel') return obs.obs_code?.startsWith('10') && obs.obs_code?.length === 7;
+          if (type === 'rainfall') return obs.obs_code?.startsWith('10') && obs.obs_code?.length === 8;
+          if (type === 'dam') return obs.obs_code?.startsWith('10') && obs.obs_code?.length === 7;
+          return false;
+        });
+
+        const stationInfos: StationInfo[] = typeObservatories.map(obs => ({
+          code: obs.obs_code!,
+          name: obs.obs_name || `${type === 'rainfall' ? '강우량' : type === 'dam' ? '댐' : '수위'}관측소_${obs.obs_code}`,
           type: type,
-          location: station.location || station.addr,
-          river_name: station.river_name || station.rivername
+          location: obs.location,
+          river_name: obs.river_name
         }));
-        
+
         this.stationCache.set(type, stationInfos);
         console.log(`✅ ${type} 관측소 ${stationInfos.length}개 로드 완료`);
       } catch (error) {
@@ -65,7 +73,7 @@ export class StationManager {
         // 실패해도 계속 진행
       }
     }
-    
+
     this.lastFetchTime = now;
   }
 

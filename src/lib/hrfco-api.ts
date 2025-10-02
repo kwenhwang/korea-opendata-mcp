@@ -82,7 +82,7 @@ export class HRFCOAPIClient {
       // 원본 데이터를 변환하여 표준 형식으로 맞춤
       const observatories: Observatory[] = data.content.map((item: any) => ({
         obs_code: item.wlobscd || item.rfobscd || item.dmobscd,
-        obs_name: item.obsnm || item.rfobsnm || item.damnm,
+        obs_name: item.obsnm || item.rfobsnm || item.damnm || (item.rfobscd ? `강우량관측소_${item.rfobscd}` : undefined),
         river_name: item.river_name || item.rivername,
         location: item.addr || item.location,
         latitude: this.convertDMSToDecimal(item.lat),
@@ -114,16 +114,48 @@ export class HRFCOAPIClient {
   async getStationList(endpoint: string): Promise<any[]> {
     try {
       const data = await this.request<any>(endpoint);
-      
+
+      let stations: any[] = [];
+
       // API 응답 구조에 따라 result 또는 content 또는 data를 반환
-      if (data.result) return data.result;
-      if (data.content) return data.content;
-      if (data.data) return data.data;
-      if (Array.isArray(data)) return data;
-      
-      // 응답 구조를 알 수 없는 경우 전체 반환
-      console.log(`⚠️ 알 수 없는 응답 구조 (${endpoint}):`, Object.keys(data));
-      return [];
+      if (data.result) stations = data.result;
+      else if (data.content) stations = data.content;
+      else if (data.data) stations = data.data;
+      else if (Array.isArray(data)) stations = data;
+      else {
+        console.log(`⚠️ 알 수 없는 응답 구조 (${endpoint}):`, Object.keys(data));
+        return [];
+      }
+
+      // 각 엔드포인트별로 필드명을 통일하여 반환 (station-manager 호환성)
+      return stations.map((station: any) => {
+        if (endpoint.includes('waterlevel')) {
+          return {
+            obs_code: station.wlobscd,
+            obs_name: station.obsnm,
+            location: station.addr,
+            wl_obs_code: station.wlobscd,
+            wl_obs_name: station.obsnm,
+          };
+        } else if (endpoint.includes('rainfall')) {
+          return {
+            obs_code: station.rfobscd,
+            obs_name: station.rfobsnm || `강우량관측소_${station.rfobscd}`,
+            location: station.addr,
+            rf_obs_code: station.rfobscd,
+            rf_obs_name: station.rfobsnm || `강우량관측소_${station.rfobscd}`,
+          };
+        } else if (endpoint.includes('dam')) {
+          return {
+            obs_code: station.dmobscd,
+            obs_name: station.damnm || `댐_${station.dmobscd}`,
+            location: station.addr,
+            damcode: station.dmobscd,
+            damnm: station.damnm || `댐_${station.dmobscd}`,
+          };
+        }
+        return station;
+      });
     } catch (error) {
       // API 키가 없을 때 데모 데이터 반환
       if (!this.apiKey) {
