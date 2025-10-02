@@ -6,16 +6,13 @@ import {
   STATION_CODE_MAPPING,
   IntegratedResponse
 } from './types';
-import { GeminiStationFinder } from './gemini-station-finder';
 
 export class HRFCOAPIClient {
   private baseUrl = 'http://api.hrfco.go.kr';
   private apiKey: string;
-  private geminiFinder: GeminiStationFinder;
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.HRFCO_API_KEY || '';
-    this.geminiFinder = new GeminiStationFinder();
   }
 
   private async request<T>(endpoint: string, params?: Record<string, string>): Promise<T> {
@@ -107,23 +104,8 @@ export class HRFCOAPIClient {
   // 통합 검색 및 데이터 조회 (ChatGPT 무한 반복 방지용)
   async searchAndGetData(query: string): Promise<IntegratedResponse> {
     try {
-      // 1. Gemini로 관측소 검색 시도
-      const geminiStations = await this.geminiFinder.findStations(query, 'waterlevel');
-      
-      let stationCode: string | null = null;
-      let stationName: string = query;
-      
-      if (geminiStations.length > 0) {
-        // Gemini가 찾은 첫 번째 관측소 사용
-        stationCode = geminiStations[0].code;
-        stationName = geminiStations[0].name;
-        console.log('🎯 Gemini 매칭 성공:', stationName, stationCode);
-      } else {
-        // Gemini 실패시 기존 로직 사용
-        console.log('🔄 Gemini 매칭 실패, 기존 로직 사용');
-        stationCode = this.findStationCode(query);
-      }
-      
+      // 1. 관측소 검색
+      const stationCode = this.findStationCode(query);
       if (!stationCode) {
         return this.createErrorResponse(`'${query}' 관측소를 찾을 수 없습니다.`);
       }
@@ -137,7 +119,7 @@ export class HRFCOAPIClient {
       }
 
       // 3. 통합 응답 생성
-      return this.createIntegratedResponse(stationName, stationCode, latestData);
+      return this.createIntegratedResponse(query, stationCode, latestData);
     } catch (error) {
       return this.createErrorResponse(`데이터 조회 중 오류가 발생했습니다: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
