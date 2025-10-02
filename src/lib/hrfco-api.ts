@@ -1,12 +1,18 @@
-import { 
-  Observatory, 
-  WaterLevelData, 
-  ObservatoryListSchema, 
+import {
+  Observatory,
+  WaterLevelData,
+  ObservatoryListSchema,
   WaterLevelResponseSchema,
   STATION_CODE_MAPPING,
   IntegratedResponse
 } from './types';
 import { StationManager } from './station-manager';
+import * as dotenv from 'dotenv';
+
+// .env 파일 로드 (개발 환경에서만)
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config();
+}
 
 export class HRFCOAPIClient {
   private baseUrl = 'http://api.hrfco.go.kr';

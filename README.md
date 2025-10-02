@@ -27,6 +27,21 @@
 }
 ```
 
+## 🎯 프로젝트 목표
+
+**홍수통제소 실시간 수문 데이터 AI 친화적 제공 플랫폼**
+
+### 주요 목표
+1. **AI 통합 최적화**: ChatGPT, Claude 등 AI 모델이 자연스럽게 한국 수문 데이터를 활용할 수 있도록 MCP 프로토콜 제공
+2. **무한 반복 방지**: AI의 반복적인 도구 호출을 방지하기 위한 통합 검색 및 응답 구조 구현
+3. **실시간 데이터 제공**: 댐 수위, 강우량, 관측소 정보를 실시간으로 조회 및 제공
+4. **확장성**: 다양한 수문 데이터 소스와의 통합을 위한 유연한 아키텍처 구축
+
+### 해결하고자 하는 문제
+- AI 모델의 비효율적인 API 호출 패턴 (무한 반복)
+- 복잡한 수문 데이터의 AI 친화적 변환
+- 실시간 데이터의 안정적 제공 및 캐싱 전략
+
 ## 🚀 빠른 시작
 
 ### 1. 의존성 설치
@@ -117,6 +132,71 @@ node test-integration.js
 ## 📱 ChatGPT 연결
 
 `chatgpt_mcp_config.json` 파일을 ChatGPT MCP 설정에 추가하세요.
+
+## 🏗️ 프로젝트 관리
+
+### 현재 브랜치: `feature/dynamic-station-mapping`
+- **상태**: 개발 중
+- **담당자**: [담당자 이름]
+- **진행률**: 80% 완료
+
+### 📋 작업 내용
+1. **동적 관측소 매핑 기능 구현**
+   - StationManager 클래스 추가로 동적 검색 지원
+   - 기존 하드코딩된 매핑과 병행 사용
+   - 검색 우선순위: 동적 검색 → 하드코딩 매핑 → 데모 데이터
+
+2. **통합 검색 및 데이터 조회 (`searchAndGetData` 메서드)**
+   - 관측소 검색 + 실시간 데이터 조회를 하나의 메서드로 통합
+   - ChatGPT 무한 반복 호출 방지 기능
+   - 통합 응답 구조로 완전한 정보 제공
+
+3. **API 클라이언트 개선**
+   - 더 robust한 에러 핸들링
+   - 환경변수 기반 API 키 관리
+   - 데모 데이터 fallback 메커니즘
+
+### 🚀 배포 정보
+
+#### 지원 플랫폼
+- **Vercel**: `npm run deploy`
+- **Netlify**: `npm run deploy:netlify`
+
+#### 배포 전 체크리스트
+- [ ] 환경변수 설정 (`.env` 파일)
+- [ ] API 키 확인 (`HRFCO_API_KEY`)
+- [ ] 빌드 성공 확인 (`npm run build`)
+- [ ] 테스트 실행 (`node test-*.js`)
+- [ ] README 업데이트
+
+#### 환경변수
+```bash
+# .env 파일
+HRFCO_API_KEY=your_api_key_here
+NODE_ENV=production  # 프로덕션 배포시
+```
+
+### 🔧 개발 환경 설정
+```bash
+# 의존성 설치
+npm install
+
+# 개발 서버 실행
+npm run dev
+
+# 타입스크립트 컴파일
+npm run build
+
+# 테스트 실행
+node test-dynamic-stations.js
+node test-station-list.js
+node test-vercel.js
+```
+
+### 📊 모니터링 및 유지보수
+- **헬스체크**: `/health` 엔드포인트
+- **로그**: 각 플랫폼의 로그 시스템 활용
+- **업데이트 주기**: API 변경사항 모니터링 필요
 
 ## 🔍 사용법
 
