@@ -160,12 +160,45 @@ export class MCPHandler {
   }
 
   private async handleToolsCall(id: string | number, params: any): Promise<MCPResponse> {
+    // 파라미터 유효성 검사
+    if (!params) {
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: {
+          code: -32602,
+          message: '필수 파라미터 "params"가 누락되었습니다.',
+        },
+      };
+    }
+
+    if (!params.name) {
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: {
+          code: -32602,
+          message: '필수 파라미터 "name"이 누락되었습니다.',
+        },
+      };
+    }
+
     const { name, arguments: args } = params;
 
     let result: any;
 
     switch (name) {
       case 'get_water_level':
+        if (!args || !args.obs_code) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: '필수 파라미터 "obs_code"가 누락되었습니다.',
+            },
+          };
+        }
         result = await this.client.getWaterLevelData(
           args.obs_code,
           args.time_type || '1H'
@@ -173,6 +206,16 @@ export class MCPHandler {
         break;
 
       case 'get_rainfall':
+        if (!args || !args.obs_code) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: '필수 파라미터 "obs_code"가 누락되었습니다.',
+            },
+          };
+        }
         result = await this.client.getRainfallData(
           args.obs_code,
           args.time_type || '1H'
@@ -186,6 +229,16 @@ export class MCPHandler {
         break;
 
       case 'search_observatory':
+        if (!args || !args.query) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: '필수 파라미터 "query"가 누락되었습니다.',
+            },
+          };
+        }
         const observatories = await this.client.getObservatories(
           args.hydro_type || 'waterlevel'
         );
@@ -193,6 +246,26 @@ export class MCPHandler {
         break;
 
       case 'get_water_info':
+        if (!args) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: '필수 파라미터 "arguments"가 누락되었습니다.',
+            },
+          };
+        }
+        if (!args.query) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: '필수 파라미터 "query"가 누락되었습니다.',
+            },
+          };
+        }
         result = await this.client.searchAndGetData(args.query);
         break;
 

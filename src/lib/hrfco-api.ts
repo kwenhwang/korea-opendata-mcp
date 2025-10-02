@@ -323,7 +323,7 @@ export class HRFCOAPIClient {
     const storageRate = this.calculateStorageRate(data.water_level);
     const status = this.determineStatus(data.water_level);
     const trend = this.determineTrend(data.water_level);
-    const lastUpdated = new Date(data.obs_time).toLocaleString('ko-KR');
+    const lastUpdated = this.parseObsTime(data.obs_time);
 
     return {
       status: 'success',
@@ -380,6 +380,42 @@ export class HRFCOAPIClient {
     if (random < 0.3) return '상승';
     if (random < 0.6) return '하강';
     return '안정';
+  }
+
+  private parseObsTime(obsTime: string): string {
+    try {
+      // HRFCO API에서 반환되는 형식: "202510022040" (YYYYMMDDHHMM)
+      if (!obsTime || obsTime.trim() === '') {
+        return new Date().toLocaleString('ko-KR');
+      }
+
+      // 형식 검증: 12자리 숫자인지 확인
+      if (obsTime.length !== 12 || !/^\d{12}$/.test(obsTime)) {
+        console.warn(`⚠️ 유효하지 않은 obs_time 형식: ${obsTime}`);
+        return new Date().toLocaleString('ko-KR');
+      }
+
+      // YYYYMMDDHHMM → YYYY-MM-DD HH:MM 형식으로 변환
+      const year = obsTime.slice(0, 4);
+      const month = obsTime.slice(4, 6);
+      const day = obsTime.slice(6, 8);
+      const hour = obsTime.slice(8, 10);
+      const minute = obsTime.slice(10, 12);
+
+      const formattedTime = `${year}-${month}-${day} ${hour}:${minute}`;
+
+      // Date 객체 생성 및 검증
+      const date = new Date(formattedTime);
+      if (isNaN(date.getTime())) {
+        console.warn(`⚠️ 유효하지 않은 날짜: ${formattedTime}`);
+        return new Date().toLocaleString('ko-KR');
+      }
+
+      return date.toLocaleString('ko-KR');
+    } catch (error) {
+      console.error('❌ obs_time 파싱 오류:', error);
+      return new Date().toLocaleString('ko-KR');
+    }
   }
 
   private getRelatedStations(stationName: string): Array<{name: string, code: string, current_level?: string, status?: string}> {
