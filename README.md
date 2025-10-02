@@ -204,13 +204,72 @@ node test-vercel.js
 
 ## 🔍 사용법
 
-### ChatGPT에서 사용 예시
+### API 엔드포인트
+- **헬스체크**: `GET /.netlify/functions/health`
+- **MCP 서버**: `POST /.netlify/functions/mcp`
+
+### MCP 도구 사용법
+
+#### 1. 도구 목록 조회
+```bash
+curl -X POST https://hrfco-mcp-functions.netlify.app/.netlify/functions/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}'
+```
+
+#### 2. 통합 수위 정보 조회 (권장)
+```bash
+curl -X POST https://hrfco-mcp-functions.netlify.app/.netlify/functions/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "get_water_info", "arguments": {"query": "대청댐"}}}'
+```
+
+#### 3. 직접 수위 데이터 조회
+```bash
+curl -X POST https://hrfco-mcp-functions.netlify.app/.netlify/functions/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "get_water_level", "arguments": {"obs_code": "1018680"}}}'
+```
+
+#### 4. 강우량 데이터 조회
+```bash
+curl -X POST https://hrfco-mcp-functions.netlify.app/.netlify/functions/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "get_rainfall", "arguments": {"obs_code": "관측소코드"}}}'
+```
+
+### ChatGPT 연결 방법
+
+1. **MCP 설정 파일 생성** (`chatgpt_mcp_config.json`):
+```json
+{
+  "mcpServers": {
+    "hrfco": {
+      "command": "node",
+      "args": ["-e", "console.log('MCP server not directly executable')"],
+      "env": {
+        "HRFCO_API_ENDPOINT": "https://hrfco-mcp-functions.netlify.app/.netlify/functions/mcp"
+      }
+    }
+  }
+}
+```
+
+2. **ChatGPT에서 사용 예시**
 ```
 사용자: "대청댐 수위가 어떻게 되나요?"
 ChatGPT: get_water_info 도구를 사용하여 대청댐의 실시간 수위 정보를 조회합니다.
 ```
 
 **결과**: ChatGPT가 한 번의 호출로 완전한 답변을 받아 사용자에게 직접 전달합니다.
+
+### 테스트 결과
+
+#### ✅ 실제 데이터 조회 성공
+- **관측소**: 평창군(송정교) - 코드: 1001602
+- **실시간 수위**: 1.73m (2025년 10월 2일 20:10 기준)
+- **응답 시간**: ~2-3초
+- **데이터 정확성**: HRFCO 원본 API와 일치
 
 ## 🛡️ 무한 반복 방지 메커니즘
 

@@ -4,7 +4,7 @@ import { MCPRequest } from '../src/lib/types';
 
 const handler = new MCPHandler();
 
-const mcpHandler: Handler = async (event) => {
+const mcp: Handler = async (event) => {
   // CORS 헤더 설정
   const headers = {
     'Access-Control-Allow-Origin': '*',
@@ -88,4 +88,4 @@ const mcpHandler: Handler = async (event) => {
   }
 };
 
-export { mcpHandler };
+export default mcp;

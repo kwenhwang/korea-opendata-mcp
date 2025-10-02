@@ -93,8 +93,8 @@ export class StationManager {
       
       // 부분 매칭
       const partialMatches = stations.filter(station => 
-        station.name.includes(query) || 
-        query.includes(station.name) ||
+        (station.name && station.name.includes(query)) || 
+        (station.name && query.includes(station.name)) ||
         (station.location && station.location.includes(query)) ||
         (station.river_name && station.river_name.includes(query))
       );

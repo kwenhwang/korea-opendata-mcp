@@ -23,6 +23,23 @@ export class HRFCOAPIClient {
     console.log('🔑 HRFCO API Key 상태:', this.apiKey ? `설정됨 (길이: ${this.apiKey.length})` : '없음');
   }
 
+  /**
+   * 도-분-초 형식의 좌표를 십진수 위경도로 변환
+   * @param dmsString "128-33-04" 형식
+   * @returns 십진수 위경도
+   */
+  private convertDMSToDecimal(dmsString: string): number {
+    if (!dmsString || dmsString.trim() === '') return 0;
+
+    // "128-33-04" → [128, 33, 04]
+    const parts = dmsString.trim().split('-').map(p => parseFloat(p.trim()));
+
+    if (parts.length !== 3) return 0;
+
+    const [degrees, minutes, seconds] = parts;
+    return degrees + minutes / 60 + seconds / 3600;
+  }
+
   private async request<T>(endpoint: string, params?: Record<string, string>): Promise<T> {
     if (!this.apiKey) {
       throw new Error('API 키가 필요합니다');
@@ -61,8 +78,28 @@ export class HRFCOAPIClient {
   async getObservatories(hydroType: string = 'waterlevel'): Promise<Observatory[]> {
     try {
       const data = await this.request<any>(`${hydroType}/info.json`);
-      const parsed = ObservatoryListSchema.parse(data);
-      return parsed.result;
+
+      // 원본 데이터를 변환하여 표준 형식으로 맞춤
+      const observatories: Observatory[] = data.content.map((item: any) => ({
+        obs_code: item.wlobscd || item.rfobscd || item.dmobscd,
+        obs_name: item.obsnm || item.rfobsnm || item.damnm,
+        river_name: item.river_name || item.rivername,
+        location: item.addr || item.location,
+        latitude: this.convertDMSToDecimal(item.lat),
+        longitude: this.convertDMSToDecimal(item.lon),
+        // 추가 정보
+        agency: item.agcnm,
+        ground_level: item.gdt ? parseFloat(item.gdt) : undefined,
+        warning_levels: {
+          attention: item.attwl ? parseFloat(item.attwl) : undefined,
+          warning: item.wrnwl ? parseFloat(item.wrnwl) : undefined,
+          alarm: item.almwl ? parseFloat(item.almwl) : undefined,
+          serious: item.srswl ? parseFloat(item.srswl) : undefined,
+          flood_control: item.pfh ? parseFloat(item.pfh) : undefined,
+        }
+      }));
+
+      return observatories;
     } catch (error) {
       if (!this.apiKey) {
         return this.getDemoObservatories();
@@ -105,12 +142,22 @@ export class HRFCOAPIClient {
 
   async getWaterLevelData(obsCode: string, timeType: string = '1H'): Promise<WaterLevelData[]> {
     try {
-      const data = await this.request<any>('waterlevel/data.json', {
+      // HRFCO API에서 실시간 데이터는 waterlevel/list.json에서 얻음
+      const data = await this.request<any>('waterlevel/list.json');
+
+      // 특정 관측소의 최신 데이터 필터링
+      const stationData = data.content?.find((item: any) => item.wlobscd === obsCode);
+
+      if (!stationData) {
+        throw new Error(`관측소 ${obsCode}의 데이터를 찾을 수 없습니다`);
+      }
+
+      return [{
         obs_code: obsCode,
-        time_type: timeType,
-      });
-      const parsed = WaterLevelResponseSchema.parse(data);
-      return parsed.result;
+        obs_time: stationData.ymdhm || new Date().toISOString(),
+        water_level: parseFloat(stationData.wl) || 0,
+        unit: 'm',
+      }];
     } catch (error) {
       if (!this.apiKey) {
         return this.getDemoWaterLevelData(obsCode);
@@ -121,11 +168,22 @@ export class HRFCOAPIClient {
 
   async getRainfallData(obsCode: string, timeType: string = '1H'): Promise<any[]> {
     try {
-      const data = await this.request<any>('rainfall/data.json', {
+      // HRFCO API에서 실시간 강우량 데이터는 rainfall/list.json에서 얻음
+      const data = await this.request<any>('rainfall/list.json');
+
+      // 특정 관측소의 최신 데이터 필터링
+      const stationData = data.content?.find((item: any) => item.rfobscd === obsCode);
+
+      if (!stationData) {
+        throw new Error(`관측소 ${obsCode}의 강우량 데이터를 찾을 수 없습니다`);
+      }
+
+      return [{
         obs_code: obsCode,
-        time_type: timeType,
-      });
-      return data.result || [];
+        obs_time: stationData.ymdhm || new Date().toISOString(),
+        rainfall: parseFloat(stationData.rf) || 0,
+        unit: 'mm',
+      }];
     } catch (error) {
       if (!this.apiKey) {
         return this.getDemoRainfallData(obsCode);

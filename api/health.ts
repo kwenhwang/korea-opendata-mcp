@@ -1,6 +1,6 @@
 import type { Handler } from '@netlify/functions';
 
-const handler: Handler = async (event) => {
+const health: Handler = async (event) => {
   const healthData = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
@@ -20,4 +20,4 @@ const handler: Handler = async (event) => {
   };
 };
 
-export { handler };
+export default health;

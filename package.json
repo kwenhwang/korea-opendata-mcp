@@ -5,8 +5,8 @@
   "main": "api/mcp.js",
   "scripts": {
     "dev": "npm run build && netlify dev",
-    "build": "npx tsc && npm run build:netlify",
-    "build:netlify": "mkdir -p dist/netlify/functions && cp -r netlify/functions/* dist/netlify/functions/",
+    "build": "npx tsc",
+    "build:netlify": "mkdir -p dist/netlify/functions && cp dist/netlify/functions/*.js dist/netlify/functions/ && cp -r dist/src dist/netlify/functions/",
     "deploy:netlify": "netlify deploy --prod"
   },
   "dependencies": {
