@@ -65,6 +65,38 @@ export class HRFCOAPIClient {
     }
   }
 
+  /**
+   * 관측소 목록 조회 (dam/list.json, waterlevel/list.json, rainfall/list.json)
+   */
+  async getStationList(endpoint: string): Promise<any[]> {
+    try {
+      const data = await this.request<any>(endpoint);
+      
+      // API 응답 구조에 따라 result 또는 content 또는 data를 반환
+      if (data.result) return data.result;
+      if (data.content) return data.content;
+      if (data.data) return data.data;
+      if (Array.isArray(data)) return data;
+      
+      // 응답 구조를 알 수 없는 경우 전체 반환
+      console.log(`⚠️ 알 수 없는 응답 구조 (${endpoint}):`, Object.keys(data));
+      return [];
+    } catch (error) {
+      // API 키가 없을 때 데모 데이터 반환
+      if (!this.apiKey) {
+        if (endpoint.includes('dam')) {
+          return this.getDemoDamList();
+        } else if (endpoint.includes('waterlevel')) {
+          return this.getDemoWaterLevelList();
+        } else if (endpoint.includes('rainfall')) {
+          return this.getDemoRainfallList();
+        }
+      }
+      console.error(`❌ ${endpoint} 조회 실패:`, error);
+      throw error;
+    }
+  }
+
   async getWaterLevelData(obsCode: string, timeType: string = '1H'): Promise<WaterLevelData[]> {
     try {
       const data = await this.request<any>('waterlevel/data.json', {
@@ -340,6 +372,40 @@ export class HRFCOAPIClient {
         rainfall: Math.random() * 50,
         unit: 'mm',
       },
+    ];
+  }
+
+  // 데모 댐 목록
+  private getDemoDamList(): any[] {
+    return [
+      { damcode: '2012110', damnm: '평림댐', addr: '전라남도 담양군', rivername: '영산강' },
+      { damcode: '1018680', damnm: '대청댐', addr: '대전광역시 대덕구', rivername: '금강' },
+      { damcode: '1018681', damnm: '소양댐', addr: '강원도 춘천시', rivername: '소양강' },
+      { damcode: '1018682', damnm: '충주댐', addr: '충청북도 충주시', rivername: '남한강' },
+      { damcode: '1018683', damnm: '안동댐', addr: '경상북도 안동시', rivername: '낙동강' },
+      { damcode: '1018684', damnm: '임하댐', addr: '경상북도 안동시', rivername: '반변천' },
+      { damcode: '1018685', damnm: '합천댐', addr: '경상남도 합천군', rivername: '황강' },
+      { damcode: '1018686', damnm: '남강댐', addr: '경상남도 진주시', rivername: '남강' },
+      { damcode: '1018687', damnm: '보령댐', addr: '충청남도 보령시', rivername: '웅천천' },
+    ];
+  }
+
+  // 데모 수위관측소 목록
+  private getDemoWaterLevelList(): any[] {
+    return [
+      { wl_obs_code: '1018690', wl_obs_name: '한강대교', addr: '서울시 용산구', rivername: '한강' },
+      { wl_obs_code: '1018691', wl_obs_name: '잠실대교', addr: '서울시 송파구', rivername: '한강' },
+      { wl_obs_code: '1018692', wl_obs_name: '청담대교', addr: '서울시 강남구', rivername: '한강' },
+      { wl_obs_code: '2012110', wl_obs_name: '평림댐수위관측소', addr: '전라남도 담양군', rivername: '영산강' },
+    ];
+  }
+
+  // 데모 우량관측소 목록
+  private getDemoRainfallList(): any[] {
+    return [
+      { rf_obs_code: '1018690', rf_obs_name: '서울관측소', addr: '서울시 종로구' },
+      { rf_obs_code: '2012110', rf_obs_name: '평림댐우량관측소', addr: '전라남도 담양군' },
+      { rf_obs_code: '1018681', rf_obs_name: '춘천관측소', addr: '강원도 춘천시' },
     ];
   }
 }
