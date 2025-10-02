@@ -6,6 +6,7 @@ import {
   STATION_CODE_MAPPING,
   IntegratedResponse
 } from './types';
+import { StationManager } from './station-manager';
 
 export class HRFCOAPIClient {
   private baseUrl = 'http://api.hrfco.go.kr';
@@ -13,6 +14,7 @@ export class HRFCOAPIClient {
 
   constructor(apiKey?: string) {
     this.apiKey = apiKey || process.env.HRFCO_API_KEY || '';
+    console.log('🔑 HRFCO API Key 상태:', this.apiKey ? `설정됨 (길이: ${this.apiKey.length})` : '없음');
   }
 
   private async request<T>(endpoint: string, params?: Record<string, string>): Promise<T> {
@@ -21,6 +23,7 @@ export class HRFCOAPIClient {
     }
 
     const url = new URL(`${this.baseUrl}/${this.apiKey}/${endpoint}`);
+    console.log('🔗 API 호출:', url.toString().replace(this.apiKey, '***'));
     
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
