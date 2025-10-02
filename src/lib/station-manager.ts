@@ -40,17 +40,22 @@ export class StationManager {
 
     console.log('🔄 관측소 목록 갱신 중...');
     
-    const types: Array<'waterlevel' | 'rainfall' | 'dam'> = ['waterlevel', 'rainfall', 'dam'];
+    // API 엔드포인트별로 데이터 수집
+    const endpoints = [
+      { type: 'dam' as const, endpoint: 'dam/list.json' },           // 댐 목록
+      { type: 'waterlevel' as const, endpoint: 'waterlevel/list.json' }, // 수위관측소
+      { type: 'rainfall' as const, endpoint: 'rainfall/list.json' }    // 우량관측소
+    ];
     
-    for (const type of types) {
+    for (const { type, endpoint } of endpoints) {
       try {
-        const stations = await this.client.getObservatories(type);
+        const stations = await this.client.getStationList(endpoint);
         const stationInfos: StationInfo[] = stations.map(station => ({
-          code: station.obs_code,
-          name: station.obs_name,
+          code: station.obs_code || station.damcode || station.wl_obs_code || station.rf_obs_code,
+          name: station.obs_name || station.damnm || station.wl_obs_name || station.rf_obs_name,
           type: type,
-          location: station.location,
-          river_name: station.river_name
+          location: station.location || station.addr,
+          river_name: station.river_name || station.rivername
         }));
         
         this.stationCache.set(type, stationInfos);

@@ -107,22 +107,56 @@ export class HRFCOAPIClient {
   // 통합 검색 및 데이터 조회 (ChatGPT 무한 반복 방지용)
   async searchAndGetData(query: string): Promise<IntegratedResponse> {
     try {
-      // 1. 관측소 검색
-      const stationCode = this.findStationCode(query);
-      if (!stationCode) {
-        return this.createErrorResponse(`'${query}' 관측소를 찾을 수 없습니다.`);
+      // 1. 동적 관측소 검색
+      const stationManager = StationManager.getInstance();
+      const searchResults = await stationManager.searchByName(query);
+      
+      if (searchResults.length === 0) {
+        // 2. 동적 검색 실패시 하드코딩된 매핑 시도
+        const hardcodedCode = this.findStationCode(query);
+        if (!hardcodedCode) {
+          return this.createErrorResponse(`'${query}' 관측소를 찾을 수 없습니다.`);
+        }
+        
+        // 하드코딩된 코드로 데이터 조회
+        const waterLevelData = await this.getWaterLevelData(hardcodedCode, '1H');
+        const latestData = waterLevelData[0];
+        
+        if (!latestData) {
+          return this.createErrorResponse(`${query}의 실시간 데이터를 가져올 수 없습니다.`);
+        }
+        
+        return this.createIntegratedResponse(query, hardcodedCode, latestData);
       }
-
-      // 2. 실시간 데이터 조회
-      const waterLevelData = await this.getWaterLevelData(stationCode, '1H');
-      const latestData = waterLevelData[0];
+      
+      // 3. 첫 번째 검색 결과 사용
+      const station = searchResults[0];
+      console.log(`✅ 관측소 검색 성공: ${station.name} (${station.code}) - ${station.type}`);
+      
+      // 4. 실시간 데이터 조회
+      let latestData;
+      if (station.type === 'rainfall') {
+        const rainfallData = await this.getRainfallData(station.code, '1H');
+        if (rainfallData.length === 0) {
+          return this.createErrorResponse(`${station.name}의 실시간 강우량 데이터를 가져올 수 없습니다.`);
+        }
+        // 강우량 데이터를 수위 데이터 형식으로 변환
+        latestData = {
+          obs_code: station.code,
+          obs_time: rainfallData[0].obs_time || new Date().toISOString(),
+          water_level: rainfallData[0].rainfall || 0
+        };
+      } else {
+        const waterLevelData = await this.getWaterLevelData(station.code, '1H');
+        latestData = waterLevelData[0];
+      }
 
       if (!latestData) {
-        return this.createErrorResponse(`${query}의 실시간 데이터를 가져올 수 없습니다.`);
+        return this.createErrorResponse(`${station.name}의 실시간 데이터를 가져올 수 없습니다.`);
       }
 
-      // 3. 통합 응답 생성
-      return this.createIntegratedResponse(query, stationCode, latestData);
+      // 5. 통합 응답 생성
+      return this.createIntegratedResponse(station.name, station.code, latestData);
     } catch (error) {
       return this.createErrorResponse(`데이터 조회 중 오류가 발생했습니다: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
