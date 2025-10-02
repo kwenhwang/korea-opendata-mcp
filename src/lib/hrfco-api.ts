@@ -31,6 +31,8 @@ export class HRFCOAPIClient {
       });
     }
 
+    console.log('📡 HRFCO API 호출:', url.toString());
+    
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
@@ -39,6 +41,11 @@ export class HRFCOAPIClient {
     });
 
     if (!response.ok) {
+      console.error('❌ API 호출 실패:', {
+        status: response.status,
+        statusText: response.statusText,
+        url: url.toString()
+      });
       throw new Error(`API 호출 실패: ${response.status} ${response.statusText}`);
     }
 
@@ -273,9 +280,9 @@ export class HRFCOAPIClient {
         longitude: 127.9000,
       },
       {
-        obs_code: '1018770',
+        obs_code: '2012110',
         obs_name: '평림댐',
-        river_name: '평림호',
+        river_name: '영산강',
         location: '전라남도 담양군',
         latitude: 35.2167,
         longitude: 126.9833,
@@ -291,7 +298,7 @@ export class HRFCOAPIClient {
       '1018682': 118.8, // 충주댐
       '1018690': 8.5,   // 한강대교
       '1018691': 7.2,   // 잠실대교
-      '3012110': 35.8,  // 평림댐
+      '2201520': 35.8,  // 평림댐
     };
 
     const waterLevel = stationData[obsCode] || (Math.random() * 10 + 5);
