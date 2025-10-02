@@ -1,15 +1,23 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
+import type { Handler } from '@netlify/functions';
 
-export default function health(req: VercelRequest, res: VercelResponse) {
+const handler: Handler = async (event) => {
   const healthData = {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     version: '1.0.0',
-    runtime: 'vercel',
+    runtime: 'netlify',
     api_keys: {
       hrfco: !!process.env.HRFCO_API_KEY,
     },
   };
 
-  return res.status(200).json(healthData);
-}
+  return {
+    statusCode: 200,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(healthData),
+  };
+};
+
+export { handler };
