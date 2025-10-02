@@ -158,8 +158,12 @@ node test-integration.js
 
 ### 🚀 배포 정보
 
+#### 현재 배포 URL
+- **프로덕션**: https://hrfco-mcp-functions.netlify.app
+- **헬스체크**: https://hrfco-mcp-functions.netlify.app/.netlify/functions/health
+- **MCP 엔드포인트**: https://hrfco-mcp-functions.netlify.app/.netlify/functions/mcp
+
 #### 지원 플랫폼
-- **Vercel**: `npm run deploy`
 - **Netlify**: `npm run deploy:netlify`
 
 #### 배포 전 체크리스트
