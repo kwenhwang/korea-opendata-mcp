@@ -56,12 +56,12 @@ export interface MCPTool {
 
 // 관측소 타입별 코드 매핑
 export const STATION_CODE_MAPPING = {
-  // 댐 API (dam/list.json, dam/info.json)
+  // 댐 API (dam/list.json, dam/info.json) - 실제 존재하는 댐만 포함
   dam: {
     '대청댐': '3008110', // 대청댐 - 한국수자원공사
-    '소양댐': '1012110', // 소양댐 - 한국수자원공사 (추정)
-    '충주댐': '1003110', // 충주댐 - 한국수자원공사 (추정)
-    '평림댐': '2012110', // 평림댐 - 한국수자원공사 (추정)
+    '소양댐': '1012110', // 소양댐 - 한국수자원공사
+    '충주댐': '1003110', // 충주댐 - 한국수자원공사
+    // 평림댐은 댐 API에 없음 (수위관측소만 존재)
   },
   // 수위관측소 API (waterlevel/list.json, waterlevel/info.json)
   waterlevel: {
@@ -93,6 +93,26 @@ export interface IntegratedResponse {
       storage_rate?: string;
       status?: string;
       trend?: string;
+      last_updated?: string;
+      inflow?: string;
+      outflow?: string;
+      current_storage?: string;
+      total_storage?: string;
+      storage_calculation_note?: string;
+      flood_limit_level?: string;
+      water_level_analysis?: {
+        status: string;
+        message: string;
+        level_difference: number | null;
+        percentage_difference: number;
+        risk_level: string;
+        flood_limit_level: number;
+      };
+    };
+    water_level_station?: {
+      name: string;
+      code: string;
+      current_level?: string;
       last_updated?: string;
     };
     related_stations?: Array<{

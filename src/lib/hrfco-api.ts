@@ -217,6 +217,75 @@ export class HRFCOAPIClient {
     }
   }
 
+  async getDamData(obsCode: string): Promise<any[]> {
+    try {
+      // HRFCO API에서 실시간 댐 데이터와 댐 정보를 병렬로 조회
+      const [damListData, damInfoData] = await Promise.all([
+        this.request<any>('dam/list.json'),
+        this.request<any>('dam/info.json')
+      ]);
+
+      // 특정 댐의 최신 데이터 필터링
+      const damData = damListData.content?.find((item: any) => item.dmobscd === obsCode);
+      const damInfo = damInfoData.content?.find((item: any) => item.dmobscd === obsCode);
+
+      if (!damData) {
+        throw new Error(`댐 ${obsCode}의 데이터를 찾을 수 없습니다`);
+      }
+
+      // 실제 데이터가 있는지 검증
+      const waterLevel = parseFloat(damData.swl); // 수위
+      const inflow = parseFloat(damData.inf); // 유입량
+      const outflow = parseFloat(damData.tototf); // 총방류량
+      
+      // HRFCO API 필드 해석 (정확한 의미)
+      const currentStorage = parseFloat(damData.sfw); // 현재저수량 (Storage Flow Water)
+      const effectiveCapacity = parseFloat(damData.ecpc); // 공용량 (사용 가능한 저수량)
+      
+      // 댐별 총저수용량 (실제 댐 정보)
+      let totalCapacity;
+      if (obsCode === '1012110') { // 소양댐
+        totalCapacity = 2900; // 2900백만m³ (사용자 제공 정확값)
+      } else if (obsCode === '3008110') { // 대청댐
+        totalCapacity = 1500; // 대청댐 총저수용량 (추정)
+      } else if (obsCode === '1003110') { // 충주댐
+        totalCapacity = 1750; // 충주댐 총저수용량 (사용자 확인값)
+      } else {
+        totalCapacity = 0; // 알 수 없음
+      }
+      
+      // 저수율 계산 비활성화 - 홍수통제소 API에서 총저수용량 정보 제공하지 않음
+      // TODO: 모든 댐의 총저수용량 데이터를 얻으면 저수율 계산 기능 개선 예정
+      const floodControlCapacity = damInfo ? parseFloat(damInfo.pfh) : 0; // 계획홍수위
+      const floodLimitLevel = damInfo ? parseFloat(damInfo.fldlmtwl) : 0; // 제한수위
+
+      if (isNaN(waterLevel)) {
+        throw new Error(`댐 ${obsCode}의 수위 데이터가 유효하지 않습니다`);
+      }
+
+      // 저수율 계산 비활성화
+      let storageRate = 0;
+
+      // 수위 분석
+      const waterLevelAnalysis = this.analyzeWaterLevel(waterLevel, floodLimitLevel);
+
+      return [{
+        obs_code: obsCode,
+        obs_time: damData.ymdhm || new Date().toISOString(),
+        water_level: waterLevel,
+        inflow: inflow || 0,
+        outflow: outflow || 0,
+        current_storage: currentStorage || 0,
+        flood_control_capacity: floodControlCapacity || 0,
+        flood_limit_level: floodLimitLevel || 0,
+        water_level_analysis: waterLevelAnalysis,
+        unit: 'm',
+      }];
+    } catch (error) {
+      throw error;
+    }
+  }
+
   searchObservatory(query: string, observatories: Observatory[]): Observatory[] {
     return observatories.filter(obs => 
       obs.obs_name.includes(query) || 
@@ -234,24 +303,59 @@ export class HRFCOAPIClient {
       
       if (searchResults.length === 0) {
         // 2. 동적 검색 실패시 하드코딩된 매핑 시도
-        // 댐인지 수위관측소인지 구분
         const isDam = query.includes('댐');
-        const stationType = isDam ? 'waterlevel' : 'waterlevel'; // 댐도 수위 데이터로 조회
-        const hardcodedCode = this.findStationCode(query, stationType);
         
-        if (!hardcodedCode) {
-          return this.createErrorResponse(`'${query}' 관측소를 찾을 수 없습니다.`);
+        if (isDam) {
+          // 댐인 경우: 댐 데이터와 수위 데이터 모두 조회
+          const damCode = this.findStationCode(query, 'dam');
+          const waterLevelCode = this.findStationCode(query, 'waterlevel');
+          
+          if (!waterLevelCode) {
+            return this.createErrorResponse(`'${query}' 관측소 정보를 찾을 수 없습니다.`);
+          }
+          
+          if (damCode) {
+            // 댐 데이터가 있는 경우: 댐 데이터와 수위 데이터 모두 조회
+            const [damData, waterLevelData] = await Promise.all([
+              this.getDamData(damCode).catch(() => null),
+              this.getWaterLevelData(waterLevelCode, '1H').catch(() => null)
+            ]);
+            
+            if (!damData && !waterLevelData) {
+              return this.createErrorResponse(`${query}의 실시간 데이터를 가져올 수 없습니다.`);
+            }
+            
+            return this.createIntegratedDamResponse(query, damCode, waterLevelCode, damData?.[0], waterLevelData?.[0]);
+          } else {
+            // 댐 데이터가 없는 경우: 수위 데이터만 조회
+            const waterLevelData = await this.getWaterLevelData(waterLevelCode, '1H');
+            const latestData = waterLevelData[0];
+            
+            if (!latestData) {
+              return this.createErrorResponse(`${query}의 실시간 데이터를 가져올 수 없습니다.`);
+            }
+            
+            return this.createIntegratedResponse(query, waterLevelCode, latestData);
+          }
+        } else {
+          // 일반 관측소인 경우
+          const stationType = 'waterlevel';
+          const hardcodedCode = this.findStationCode(query, stationType);
+          
+          if (!hardcodedCode) {
+            return this.createErrorResponse(`'${query}' 관측소를 찾을 수 없습니다.`);
+          }
+          
+          // 하드코딩된 코드로 데이터 조회
+          const waterLevelData = await this.getWaterLevelData(hardcodedCode, '1H');
+          const latestData = waterLevelData[0];
+          
+          if (!latestData) {
+            return this.createErrorResponse(`${query}의 실시간 데이터를 가져올 수 없습니다.`);
+          }
+          
+          return this.createIntegratedResponse(query, hardcodedCode, latestData);
         }
-        
-        // 하드코딩된 코드로 데이터 조회
-        const waterLevelData = await this.getWaterLevelData(hardcodedCode, '1H');
-        const latestData = waterLevelData[0];
-        
-        if (!latestData) {
-          return this.createErrorResponse(`${query}의 실시간 데이터를 가져올 수 없습니다.`);
-        }
-        
-        return this.createIntegratedResponse(query, hardcodedCode, latestData);
       }
       
       // 3. 첫 번째 검색 결과 사용
@@ -330,6 +434,75 @@ export class HRFCOAPIClient {
     };
   }
 
+  private createIntegratedDamResponse(
+    damName: string, 
+    damCode: string, 
+    waterLevelCode: string, 
+    damData: any, 
+    waterLevelData: any
+  ): IntegratedResponse {
+    // 댐 데이터가 있으면 댐 수위 사용, 없으면 수위관측소 데이터 사용
+    const primaryData = damData || waterLevelData;
+    const currentLevel = `${primaryData.water_level.toFixed(1)}m`;
+    const status = this.determineStatus(primaryData.water_level);
+    const trend = this.determineTrend(primaryData.water_level);
+    const lastUpdated = this.parseObsTime(primaryData.obs_time);
+
+    // 댐 정보 구성
+    const damInfo: any = {
+      name: damName,
+      code: damCode,
+      current_level: currentLevel,
+      status: status,
+      trend: trend,
+      last_updated: lastUpdated
+    };
+
+    // 댐 데이터가 있으면 추가 정보 포함
+    if (damData) {
+      damInfo.inflow = `${damData.inflow.toFixed(1)}m³/s`;
+      damInfo.outflow = `${damData.outflow.toFixed(1)}m³/s`;
+      damInfo.current_storage = `${damData.current_storage.toFixed(1)}백만m³`;
+      
+      // 수위 분석 정보
+      if (damData.water_level_analysis) {
+        damInfo.water_level_analysis = damData.water_level_analysis;
+        damInfo.flood_limit_level = `${damData.flood_limit_level}m`;
+      }
+    }
+
+    // 수위관측소 정보도 포함
+    const waterLevelInfo = waterLevelData ? {
+      name: `${damName} 수위관측소`,
+      code: waterLevelCode,
+      current_level: `${waterLevelData.water_level.toFixed(1)}m`,
+      last_updated: this.parseObsTime(waterLevelData.obs_time)
+    } : undefined;
+
+    // 직접 답변 구성
+    let directAnswer = `${damName}의 현재 수위는 ${currentLevel}이며, ${status} 상태입니다.`;
+    
+    if (damData) {
+      directAnswer += ` 유입량은 ${damInfo.inflow}, 방류량은 ${damInfo.outflow}입니다.`;
+      
+      if (damData.water_level_analysis && damData.water_level_analysis.status !== '정보부족') {
+        directAnswer += ` ${damData.water_level_analysis.message}`;
+      }
+    }
+
+    return {
+      status: 'success',
+      summary: `${damName} 현재 수위는 ${currentLevel}입니다`,
+      direct_answer: directAnswer,
+      detailed_data: {
+        primary_station: damInfo,
+        water_level_station: waterLevelInfo,
+        related_stations: this.getRelatedStations(damName)
+      },
+      timestamp: new Date().toISOString()
+    };
+  }
+
   private createErrorResponse(message: string): IntegratedResponse {
     return {
       status: 'error',
@@ -359,6 +532,45 @@ export class HRFCOAPIClient {
     if (random < 0.3) return '상승';
     if (random < 0.6) return '하강';
     return '안정';
+  }
+
+  private analyzeWaterLevel(currentLevel: number, floodLimitLevel: number): any {
+    if (floodLimitLevel <= 0) {
+      return {
+        status: '정보부족',
+        message: '제한수위 정보가 없어 분석할 수 없습니다.',
+        level_difference: null,
+        risk_level: 'unknown'
+      };
+    }
+
+    const difference = currentLevel - floodLimitLevel;
+    const percentage = (difference / floodLimitLevel) * 100;
+
+    let status, message, riskLevel;
+
+    if (difference > 0) {
+      status = '제한수위 초과';
+      message = `현재 수위가 제한수위보다 ${difference.toFixed(1)}m 높습니다 (${percentage.toFixed(1)}% 초과)`;
+      riskLevel = 'high';
+    } else if (difference > -1) {
+      status = '제한수위 근접';
+      message = `현재 수위가 제한수위보다 ${Math.abs(difference).toFixed(1)}m 낮습니다 (${Math.abs(percentage).toFixed(1)}% 낮음)`;
+      riskLevel = 'medium';
+    } else {
+      status = '안전';
+      message = `현재 수위가 제한수위보다 ${Math.abs(difference).toFixed(1)}m 낮습니다 (${Math.abs(percentage).toFixed(1)}% 낮음)`;
+      riskLevel = 'low';
+    }
+
+    return {
+      status,
+      message,
+      level_difference: difference,
+      percentage_difference: percentage,
+      risk_level: riskLevel,
+      flood_limit_level: floodLimitLevel
+    };
   }
 
   private parseObsTime(obsTime: string): string {
