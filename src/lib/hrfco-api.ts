@@ -101,9 +101,6 @@ export class HRFCOAPIClient {
 
       return observatories;
     } catch (error) {
-      if (!this.apiKey) {
-        return this.getDemoObservatories();
-      }
       throw error;
     }
   }
@@ -157,16 +154,6 @@ export class HRFCOAPIClient {
         return station;
       });
     } catch (error) {
-      // API 키가 없을 때 데모 데이터 반환
-      if (!this.apiKey) {
-        if (endpoint.includes('dam')) {
-          return this.getDemoDamList();
-        } else if (endpoint.includes('waterlevel')) {
-          return this.getDemoWaterLevelList();
-        } else if (endpoint.includes('rainfall')) {
-          return this.getDemoRainfallList();
-        }
-      }
       console.error(`❌ ${endpoint} 조회 실패:`, error);
       throw error;
     }
@@ -197,9 +184,6 @@ export class HRFCOAPIClient {
         unit: 'm',
       }];
     } catch (error) {
-      if (!this.apiKey) {
-        return this.getDemoWaterLevelData(obsCode);
-      }
       throw error;
     }
   }
@@ -229,9 +213,6 @@ export class HRFCOAPIClient {
         unit: 'mm',
       }];
     } catch (error) {
-      if (!this.apiKey) {
-        return this.getDemoRainfallData(obsCode);
-      }
       throw error;
     }
   }
@@ -253,7 +234,11 @@ export class HRFCOAPIClient {
       
       if (searchResults.length === 0) {
         // 2. 동적 검색 실패시 하드코딩된 매핑 시도
-        const hardcodedCode = this.findStationCode(query);
+        // 댐인지 수위관측소인지 구분
+        const isDam = query.includes('댐');
+        const stationType = isDam ? 'waterlevel' : 'waterlevel'; // 댐도 수위 데이터로 조회
+        const hardcodedCode = this.findStationCode(query, stationType);
+        
         if (!hardcodedCode) {
           return this.createErrorResponse(`'${query}' 관측소를 찾을 수 없습니다.`);
         }
@@ -302,14 +287,16 @@ export class HRFCOAPIClient {
     }
   }
 
-  private findStationCode(query: string): string | null {
+  private findStationCode(query: string, type: 'dam' | 'waterlevel' | 'rainfall' = 'waterlevel'): string | null {
+    const mapping = STATION_CODE_MAPPING[type] as Record<string, string>;
+    
     // 정확한 매칭 먼저 시도
-    if (STATION_CODE_MAPPING[query]) {
-      return STATION_CODE_MAPPING[query];
+    if (mapping[query]) {
+      return mapping[query];
     }
 
     // 부분 매칭 시도
-    for (const [name, code] of Object.entries(STATION_CODE_MAPPING)) {
+    for (const [name, code] of Object.entries(mapping)) {
       if (name.includes(query) || query.includes(name)) {
         return code;
       }
@@ -320,21 +307,19 @@ export class HRFCOAPIClient {
 
   private createIntegratedResponse(stationName: string, stationCode: string, data: WaterLevelData): IntegratedResponse {
     const currentLevel = `${data.water_level.toFixed(1)}m`;
-    const storageRate = this.calculateStorageRate(data.water_level);
     const status = this.determineStatus(data.water_level);
     const trend = this.determineTrend(data.water_level);
     const lastUpdated = this.parseObsTime(data.obs_time);
 
     return {
       status: 'success',
-      summary: `${stationName} 현재 수위는 ${currentLevel}입니다 (저수율 ${storageRate})`,
-      direct_answer: `${stationName}의 현재 수위는 ${currentLevel}이며, 저수율 ${storageRate}로 ${status} 상태입니다.`,
+      summary: `${stationName} 현재 수위는 ${currentLevel}입니다`,
+      direct_answer: `${stationName}의 현재 수위는 ${currentLevel}이며, ${status} 상태입니다.`,
       detailed_data: {
         primary_station: {
           name: stationName,
           code: stationCode,
           current_level: currentLevel,
-          storage_rate: storageRate,
           status: status,
           trend: trend,
           last_updated: lastUpdated
@@ -360,17 +345,11 @@ export class HRFCOAPIClient {
     };
   }
 
-  private calculateStorageRate(waterLevel: number): string {
-    // 간단한 저수율 계산 (실제로는 더 복잡한 공식 필요)
-    const baseLevel = 100; // 기준 수위
-    const maxLevel = 150; // 최대 수위
-    const rate = Math.min(100, Math.max(0, ((waterLevel - baseLevel) / (maxLevel - baseLevel)) * 100));
-    return `${rate.toFixed(1)}%`;
-  }
 
   private determineStatus(waterLevel: number): string {
-    if (waterLevel < 110) return '낮음';
-    if (waterLevel > 140) return '높음';
+    // 평림댐 기준으로 상태 판정
+    if (waterLevel < 100) return '낮음';
+    if (waterLevel > 112) return '높음';
     return '정상';
   }
 
@@ -419,137 +398,26 @@ export class HRFCOAPIClient {
   }
 
   private getRelatedStations(stationName: string): Array<{name: string, code: string, current_level?: string, status?: string}> {
-    // 관련 관측소 반환 (간단한 예시)
+    // 관련 관측소 반환 (수위관측소 코드 사용)
     const related = [];
     if (stationName.includes('댐')) {
-      related.push({ name: '소양댐', code: '1018681' });
-      related.push({ name: '충주댐', code: '1018682' });
+      related.push({ name: '소양댐', code: '1010690' }); // 춘천시(춘천댐)
+      related.push({ name: '충주댐', code: '1003666' }); // 충주시(충주댐)
     } else if (stationName.includes('대교')) {
-      related.push({ name: '한강대교', code: '1018690' });
-      related.push({ name: '잠실대교', code: '1018691' });
+      related.push({ name: '한강대교', code: '1018683' }); // 서울시(한강대교)
     }
     return related;
   }
 
-  // 데모 데이터 (실제 코드 포함)
-  private getDemoObservatories(): Observatory[] {
-    return [
-      {
-        obs_code: '1018680',
-        obs_name: '대청댐',
-        river_name: '대청호',
-        location: '대전광역시 대덕구',
-        latitude: 36.3500,
-        longitude: 127.4500,
-      },
-      {
-        obs_code: '1018690',
-        obs_name: '한강대교',
-        river_name: '한강',
-        location: '서울시 용산구',
-        latitude: 37.5326,
-        longitude: 126.9652,
-      },
-      {
-        obs_code: '1018691', 
-        obs_name: '잠실대교',
-        river_name: '한강',
-        location: '서울시 송파구',
-        latitude: 37.5219,
-        longitude: 127.0812,
-      },
-      {
-        obs_code: '1018681',
-        obs_name: '소양댐',
-        river_name: '소양호',
-        location: '강원도 춘천시',
-        latitude: 37.9500,
-        longitude: 127.8000,
-      },
-      {
-        obs_code: '1018682',
-        obs_name: '충주댐',
-        river_name: '충주호',
-        location: '충청북도 충주시',
-        latitude: 37.0000,
-        longitude: 127.9000,
-      },
-      {
-        obs_code: '2012110',
-        obs_name: '평림댐',
-        river_name: '영산강',
-        location: '전라남도 담양군',
-        latitude: 35.2167,
-        longitude: 126.9833,
-      },
-    ];
-  }
+  // 데모 데이터 제거 - 실제 API 데이터만 사용
 
-  private getDemoWaterLevelData(obsCode: string): WaterLevelData[] {
-    // 관측소별 현실적인 수위 데이터
-    const stationData: Record<string, number> = {
-      '1018680': 120.5, // 대청댐
-      '1018681': 115.2, // 소양댐
-      '1018682': 118.8, // 충주댐
-      '1018690': 8.5,   // 한강대교
-      '1018691': 7.2,   // 잠실대교
-      '2201520': 35.8,  // 평림댐
-    };
+  // 데모 수위 데이터 제거 - 실제 API 데이터만 사용
 
-    const waterLevel = stationData[obsCode] || (Math.random() * 10 + 5);
-    
-    return [
-      {
-        obs_code: obsCode,
-        obs_time: new Date().toISOString(),
-        water_level: waterLevel,
-        unit: 'm',
-      },
-    ];
-  }
+  // 데모 강우량 데이터 제거 - 실제 API 데이터만 사용
 
-  private getDemoRainfallData(obsCode: string): any[] {
-    return [
-      {
-        obs_code: obsCode,
-        obs_time: new Date().toISOString(),
-        rainfall: Math.random() * 50,
-        unit: 'mm',
-      },
-    ];
-  }
+  // 데모 댐 목록 제거 - 실제 API 데이터만 사용
 
-  // 데모 댐 목록
-  private getDemoDamList(): any[] {
-    return [
-      { damcode: '2012110', damnm: '평림댐', addr: '전라남도 담양군', rivername: '영산강' },
-      { damcode: '1018680', damnm: '대청댐', addr: '대전광역시 대덕구', rivername: '금강' },
-      { damcode: '1018681', damnm: '소양댐', addr: '강원도 춘천시', rivername: '소양강' },
-      { damcode: '1018682', damnm: '충주댐', addr: '충청북도 충주시', rivername: '남한강' },
-      { damcode: '1018683', damnm: '안동댐', addr: '경상북도 안동시', rivername: '낙동강' },
-      { damcode: '1018684', damnm: '임하댐', addr: '경상북도 안동시', rivername: '반변천' },
-      { damcode: '1018685', damnm: '합천댐', addr: '경상남도 합천군', rivername: '황강' },
-      { damcode: '1018686', damnm: '남강댐', addr: '경상남도 진주시', rivername: '남강' },
-      { damcode: '1018687', damnm: '보령댐', addr: '충청남도 보령시', rivername: '웅천천' },
-    ];
-  }
+  // 데모 수위관측소 목록 제거 - 실제 API 데이터만 사용
 
-  // 데모 수위관측소 목록
-  private getDemoWaterLevelList(): any[] {
-    return [
-      { wl_obs_code: '1018690', wl_obs_name: '한강대교', addr: '서울시 용산구', rivername: '한강' },
-      { wl_obs_code: '1018691', wl_obs_name: '잠실대교', addr: '서울시 송파구', rivername: '한강' },
-      { wl_obs_code: '1018692', wl_obs_name: '청담대교', addr: '서울시 강남구', rivername: '한강' },
-      { wl_obs_code: '2012110', wl_obs_name: '평림댐수위관측소', addr: '전라남도 담양군', rivername: '영산강' },
-    ];
-  }
-
-  // 데모 우량관측소 목록
-  private getDemoRainfallList(): any[] {
-    return [
-      { rf_obs_code: '1018690', rf_obs_name: '서울관측소', addr: '서울시 종로구' },
-      { rf_obs_code: '2012110', rf_obs_name: '평림댐우량관측소', addr: '전라남도 담양군' },
-      { rf_obs_code: '1018681', rf_obs_name: '춘천관측소', addr: '강원도 춘천시' },
-    ];
-  }
+  // 데모 우량관측소 목록 제거 - 실제 API 데이터만 사용
 }

@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "hrfco": {
+      "httpUrl": "https://hrfco-mcp-ts.vercel.app/api/mcp"
+    }
+  }
+}
