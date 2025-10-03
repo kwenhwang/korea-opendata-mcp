@@ -4,7 +4,7 @@
   "description": "HRFCO MCP Server in TypeScript",
   "main": "api/mcp.js",
   "scripts": {
-    "dev": "npx vercel dev",
+    "dev": "vercel dev",
     "build": "npx tsc",
     "deploy": "npx vercel --prod"
   },
