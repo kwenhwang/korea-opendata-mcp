@@ -16,13 +16,13 @@ export class StationManager {
   private readonly CACHE_DURATION = 60 * 60 * 1000; // 1시간
   private client: HRFCOAPIClient;
 
-  private constructor() {
-    this.client = new HRFCOAPIClient();
+  private constructor(apiKey?: string) {
+    this.client = new HRFCOAPIClient(apiKey);
   }
 
-  static getInstance(): StationManager {
+  static getInstance(apiKey?: string): StationManager {
     if (!this.instance) {
-      this.instance = new StationManager();
+      this.instance = new StationManager(apiKey);
     }
     return this.instance;
   }
@@ -50,13 +50,8 @@ export class StationManager {
 
         const observatories = await this.client.getObservatories(type === 'dam' ? 'dam' : type);
 
-        // 타입별로 필터링
-        const typeObservatories = observatories.filter(obs => {
-          if (type === 'waterlevel') return obs.obs_code?.startsWith('10') && obs.obs_code?.length === 7;
-          if (type === 'rainfall') return obs.obs_code?.startsWith('10') && obs.obs_code?.length === 8;
-          if (type === 'dam') return obs.obs_code?.startsWith('10') && obs.obs_code?.length === 7;
-          return false;
-        });
+        // 모든 관측소 로딩 (필터링 제거)
+        const typeObservatories = observatories.filter(obs => obs.obs_code && obs.obs_name);
 
         const stationInfos: StationInfo[] = typeObservatories.map(obs => ({
           code: obs.obs_code!,

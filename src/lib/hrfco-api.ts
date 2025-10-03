@@ -79,13 +79,15 @@ export class HRFCOAPIClient {
     try {
       const data = await this.request<any>(`${hydroType}/info.json`);
 
-      // 원본 데이터를 변환하여 표준 형식으로 맞춤
-      const observatories: Observatory[] = data.content.map((item: any) => ({
-        obs_code: item.wlobscd || item.rfobscd || item.dmobscd,
-        obs_name: item.obsnm || item.rfobsnm || item.damnm || (item.rfobscd ? `강우량관측소_${item.rfobscd}` : undefined),
-        river_name: item.river_name || item.rivername,
-        location: item.addr || item.location,
-        latitude: this.convertDMSToDecimal(item.lat),
+      // 원본 데이터를 변환하여 표준 형식으로 맞춤 (null 값 필터링)
+      const observatories: Observatory[] = data.content
+        .filter((item: any) => item && item !== null) // null 값 필터링
+        .map((item: any) => ({
+          obs_code: item.wlobscd || item.rfobscd || item.dmobscd,
+          obs_name: item.obsnm || item.rfobsnm || (item.rfobscd ? `강우량관측소_${item.rfobscd}` : undefined),
+          river_name: item.river_name || item.rivername,
+          location: item.addr || item.location,
+          latitude: this.convertDMSToDecimal(item.lat),
         longitude: this.convertDMSToDecimal(item.lon),
         // 추가 정보
         agency: item.agcnm,
@@ -227,7 +229,7 @@ export class HRFCOAPIClient {
 
       // 특정 댐의 최신 데이터 필터링
       const damData = damListData.content?.find((item: any) => item.dmobscd === obsCode);
-      const damInfo = damInfoData.content?.find((item: any) => item.dmobscd === obsCode);
+      const damInfo = damInfoData.content?.find((item: any) => item && item.dmobscd === obsCode);
 
       if (!damData) {
         throw new Error(`댐 ${obsCode}의 데이터를 찾을 수 없습니다`);
@@ -298,7 +300,7 @@ export class HRFCOAPIClient {
   async searchAndGetData(query: string): Promise<IntegratedResponse> {
     try {
       // 1. 동적 관측소 검색
-      const stationManager = StationManager.getInstance();
+      const stationManager = StationManager.getInstance(this.apiKey);
       const searchResults = await stationManager.searchByName(query);
       
       if (searchResults.length === 0) {
@@ -363,29 +365,59 @@ export class HRFCOAPIClient {
       console.log(`✅ 관측소 검색 성공: ${station.name} (${station.code}) - ${station.type}`);
       
       // 4. 실시간 데이터 조회
-      let latestData;
-      if (station.type === 'rainfall') {
+      if (station.type === 'dam') {
+        // 댐인 경우: 댐 데이터 조회
+        const damData = await this.getDamData(station.code);
+        if (!damData || damData.length === 0) {
+          return this.createErrorResponse(`${station.name}의 실시간 댐 데이터를 가져올 수 없습니다.`);
+        }
+        
+        // 댐 데이터를 통합 응답으로 변환
+        const damInfo = damData[0];
+        return {
+          status: 'success' as const,
+          direct_answer: `${station.name}의 현재 수위는 ${damInfo.water_level}m이며, ${damInfo.water_level_analysis.status}입니다. 유입량은 ${damInfo.inflow}m³/s, 방류량은 ${damInfo.outflow}m³/s입니다.${damInfo.water_level_analysis.message ? ` ${damInfo.water_level_analysis.message}` : ''}`,
+          summary: `${station.name} 댐 정보: 수위 ${damInfo.water_level}m, 유입량 ${damInfo.inflow}m³/s, 방류량 ${damInfo.outflow}m³/s`,
+          timestamp: new Date().toISOString(),
+          detailed_data: {
+            primary_station: {
+              name: station.name,
+              code: station.code,
+              current_level: `${damInfo.water_level}m`,
+              status: damInfo.water_level_analysis.status,
+              inflow: `${damInfo.inflow}m³/s`,
+              outflow: `${damInfo.outflow}m³/s`,
+              current_storage: `${damInfo.current_storage}백만m³`,
+              flood_limit_level: `${damInfo.flood_limit_level}m`,
+              water_level_analysis: damInfo.water_level_analysis
+            },
+            water_level_station: undefined
+          }
+        };
+      } else if (station.type === 'rainfall') {
         const rainfallData = await this.getRainfallData(station.code, '1H');
         if (rainfallData.length === 0) {
           return this.createErrorResponse(`${station.name}의 실시간 강우량 데이터를 가져올 수 없습니다.`);
         }
         // 강우량 데이터를 수위 데이터 형식으로 변환
-        latestData = {
+        const latestData = {
           obs_code: station.code,
           obs_time: rainfallData[0].obs_time || new Date().toISOString(),
           water_level: rainfallData[0].rainfall || 0
         };
+        
+        return this.createIntegratedResponse(station.name, station.code, latestData);
       } else {
+        // 수위관측소인 경우
         const waterLevelData = await this.getWaterLevelData(station.code, '1H');
-        latestData = waterLevelData[0];
+        const latestData = waterLevelData[0];
+        
+        if (!latestData) {
+          return this.createErrorResponse(`${station.name}의 실시간 데이터를 가져올 수 없습니다.`);
+        }
+        
+        return this.createIntegratedResponse(station.name, station.code, latestData);
       }
-
-      if (!latestData) {
-        return this.createErrorResponse(`${station.name}의 실시간 데이터를 가져올 수 없습니다.`);
-      }
-
-      // 5. 통합 응답 생성
-      return this.createIntegratedResponse(station.name, station.code, latestData);
     } catch (error) {
       return this.createErrorResponse(`데이터 조회 중 오류가 발생했습니다: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
