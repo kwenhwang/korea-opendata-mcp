@@ -51,7 +51,9 @@ export class MCPHandler {
       result: {
         protocolVersion: '2024-11-05',
         capabilities: {
-          tools: {},
+          tools: {
+            listChanged: true
+          },
         },
         serverInfo: {
           name: 'hrfco-mcp-ts',

@@ -2,13 +2,19 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { MCPHandler } from '../dist/lib/mcp-handler';
 import { MCPRequest } from '../dist/lib/types';
 
+// 환경변수 검증
+if (!process.env.HRFCO_API_KEY) {
+  console.error('❌ HRFCO_API_KEY 환경변수가 설정되지 않았습니다.');
+}
+
 const mcpHandler = new MCPHandler();
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // CORS 헤더 설정
+  // CORS 헤더 설정 (강화)
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+  res.setHeader('Access-Control-Max-Age', '86400');
   res.setHeader('Content-Type', 'application/json');
 
   // OPTIONS 요청 처리
@@ -45,6 +51,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const mcpRequest: MCPRequest = req.body;
 
+    // 디버깅을 위한 로깅
+    console.log('🔍 MCP Request:', JSON.stringify(mcpRequest, null, 2));
+
     // 요청 검증
     if (!mcpRequest.jsonrpc || !mcpRequest.method) {
       res.status(400).json({
@@ -59,6 +68,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const response = await mcpHandler.handleRequest(mcpRequest);
+    
+    // 응답 로깅
+    console.log('✅ MCP Response:', JSON.stringify(response, null, 2));
+    
     res.status(200).json(response);
 
   } catch (error) {
