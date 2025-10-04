@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { MCPHandler } from '../dist/lib/mcp-handler';
-import { MCPRequest } from '../dist/lib/types';
+import { MCPHandler } from '../lib';
+import type { MCPRequest } from '../lib';
 
 // 환경변수 검증
 if (!process.env.HRFCO_API_KEY) {
