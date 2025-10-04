@@ -1,5 +1,6 @@
 import { Observatory } from './types';
 import { HRFCOAPIClient } from './hrfco-api';
+import { logger as defaultLogger, Logger } from '../utils/logger';
 
 export interface StationInfo {
   code: string;
@@ -9,20 +10,48 @@ export interface StationInfo {
   river_name?: string;
 }
 
+export interface StationApiClient {
+  getObservatories(hydroType?: string): Promise<Observatory[]>;
+}
+
+export interface StationManagerOptions {
+  cacheDurationMs?: number;
+  logger?: Logger;
+}
+
 export class StationManager {
   private static instance: StationManager;
   private stationCache: Map<string, StationInfo[]> = new Map();
-  private lastFetchTime: number = 0;
-  private readonly CACHE_DURATION = 60 * 60 * 1000; // 1시간
-  private client: HRFCOAPIClient;
+  private lastFetchTime = 0;
+  private cacheDuration: number;
+  private logger: Logger;
+  private client: StationApiClient;
 
-  private constructor(apiKey?: string) {
-    this.client = new HRFCOAPIClient(apiKey);
+  private constructor(client: StationApiClient, options: StationManagerOptions = {}) {
+    this.client = client;
+    this.cacheDuration = options.cacheDurationMs ?? 60 * 60 * 1000; // default 1 hour
+    this.logger = options.logger ?? defaultLogger;
   }
 
-  static getInstance(apiKey?: string): StationManager {
+  static getInstance(
+    clientOrApiKey?: StationApiClient | string,
+    options: StationManagerOptions = {}
+  ): StationManager {
     if (!this.instance) {
-      this.instance = new StationManager(apiKey);
+      if (typeof clientOrApiKey === 'string' || clientOrApiKey === undefined) {
+        this.instance = new StationManager(new HRFCOAPIClient(clientOrApiKey), options);
+      } else {
+        this.instance = new StationManager(clientOrApiKey, options);
+      }
+    } else if (clientOrApiKey && typeof clientOrApiKey !== 'string') {
+      // allow refreshing the client in existing singleton when explicitly provided
+      this.instance.client = clientOrApiKey;
+      if (options.logger) {
+        this.instance.logger = options.logger;
+      }
+      if (options.cacheDurationMs) {
+        this.instance.cacheDuration = options.cacheDurationMs;
+      }
     }
     return this.instance;
   }
@@ -34,11 +63,11 @@ export class StationManager {
     const now = Date.now();
 
     // 캐시가 유효하면 스킵
-    if (this.lastFetchTime && (now - this.lastFetchTime) < this.CACHE_DURATION) {
+    if (this.lastFetchTime && (now - this.lastFetchTime) < this.cacheDuration) {
       return;
     }
 
-    console.log('🔄 관측소 목록 갱신 중...');
+    this.logger.info('Refreshing station cache');
 
     // 각 타입별로 관측소 정보 수집 (이름 정보를 위해 getObservatories 사용)
     const types = ['waterlevel', 'rainfall', 'dam'] as const;
@@ -62,9 +91,14 @@ export class StationManager {
         }));
 
         this.stationCache.set(type, stationInfos);
-        console.log(`✅ ${type} 관측소 ${stationInfos.length}개 로드 완료`);
+        this.logger.debug('Loaded stations', {
+          type,
+          count: stationInfos.length,
+        });
       } catch (error) {
-        console.error(`❌ ${type} 관측소 로드 실패:`, error);
+        this.logger.error(`${type} station load failed`, {
+          error: error instanceof Error ? error.message : error,
+        });
         // 실패해도 계속 진행
       }
     }
