@@ -103,7 +103,7 @@ echo "HRFCO MCP Server" > public/index.html
 
 ## 📁 최종 파일 구조
 ```
-hrfco-mcp-ts/
+korea-opendata-mcp/
 ├── api/
 │   ├── health.ts
 │   └── mcp.ts

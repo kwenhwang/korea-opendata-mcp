@@ -1,5 +1,5 @@
 import { Observatory } from './types';
-import { HRFCOAPIClient } from './hrfco-api';
+import { KoreaOpenDataAPIClient } from './korea-opendata-api';
 import { logger as defaultLogger, Logger } from '../utils/logger';
 
 export interface StationInfo {
@@ -39,7 +39,7 @@ export class StationManager {
   ): StationManager {
     if (!this.instance) {
       if (typeof clientOrApiKey === 'string' || clientOrApiKey === undefined) {
-        this.instance = new StationManager(new HRFCOAPIClient(clientOrApiKey), options);
+        this.instance = new StationManager(new KoreaOpenDataAPIClient(clientOrApiKey), options);
       } else {
         this.instance = new StationManager(clientOrApiKey, options);
       }

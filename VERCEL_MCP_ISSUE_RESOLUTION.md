@@ -49,7 +49,7 @@ curl -X POST https://hrfco-mcp-lctuob0og-kewns-projects.vercel.app/api/mcp \
 
 ### Step 2: 최신 코드 재배포
 ```bash
-cd /home/ubuntu/hrfco-mcp-ts
+cd /home/ubuntu/korea-opendata-mcp
 npm run deploy
 # 새로운 URL: https://hrfco-mcp-bp8lywit3-kewns-projects.vercel.app
 ```

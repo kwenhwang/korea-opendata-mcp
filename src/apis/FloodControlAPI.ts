@@ -74,7 +74,7 @@ type ObservatoryRawRecord = {
 
 export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRawResponse> {
   constructor(overrides: Partial<FloodControlConfig> = {}, logger: Logger = defaultLogger) {
-    const config = loadAPIConfig('HRFCO', {
+    const config = loadAPIConfig('KoreaOpenData', {
       overrides: {
         baseUrl: DEFAULT_BASE_URL,
         authStrategy: AuthStrategy.CustomKey,
@@ -93,7 +93,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
   protected authenticate(context: AuthContext): AuthContext {
     const apiKey = this.config.apiKey;
     if (!apiKey) {
-      throw new Error('HRFCO API 키가 필요합니다. 환경변수를 확인해주세요.');
+      throw new Error('KoreaOpenData API 키가 필요합니다. 환경변수를 확인해주세요.');
     }
 
     const params = { ...context.params };
@@ -435,7 +435,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
 
     const apiKey = this.config.apiKey ?? this.config.serviceKey;
     if (!apiKey) {
-      throw new Error('HRFCO API 키가 필요합니다. 환경변수를 확인해주세요.');
+      throw new Error('KoreaOpenData API 키가 필요합니다. 환경변수를 확인해주세요.');
     }
 
     return `${apiKey}/${trimmed}`;

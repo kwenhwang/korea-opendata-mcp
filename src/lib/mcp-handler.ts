@@ -1,11 +1,11 @@
 import { MCPRequest, MCPResponse, MCPTool, IntegratedResponse } from './types';
-import { HRFCOAPIClient } from './hrfco-api';
+import { KoreaOpenDataAPIClient } from './korea-opendata-api';
 
 export class MCPHandler {
-  private client: HRFCOAPIClient;
+  private client: KoreaOpenDataAPIClient;
 
   constructor() {
-    this.client = new HRFCOAPIClient();
+    this.client = new KoreaOpenDataAPIClient();
   }
 
   async handleRequest(request: MCPRequest): Promise<MCPResponse> {
@@ -56,7 +56,7 @@ export class MCPHandler {
           },
         },
         serverInfo: {
-          name: 'hrfco-mcp-ts',
+          name: 'korea-opendata-mcp',
           version: '1.0.0',
         },
       },

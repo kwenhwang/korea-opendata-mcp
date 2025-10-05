@@ -2,7 +2,7 @@ import type { Logger } from '../utils/logger';
 import { logger as defaultLogger } from '../utils/logger';
 import { FloodControlAPI, type FloodControlConfig } from '../apis/FloodControlAPI';
 
-export class HRFCOAPIClient {
+export class KoreaOpenDataAPIClient {
   private readonly api: FloodControlAPI;
 
   constructor(apiKey?: string, logger: Logger = defaultLogger) {

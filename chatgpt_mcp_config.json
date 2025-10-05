@@ -2,7 +2,7 @@
   "mcpServers": {
     "hrfco-water-data-ts": {
       "command": "node",
-      "args": ["/home/ubuntu/hrfco-mcp-ts/dist/mcp-server.js"],
+      "args": ["/home/ubuntu/korea-opendata-mcp/dist/mcp-server.js"],
       "env": {
         "HRFCO_API_KEY": "${HRFCO_API_KEY}"
       }

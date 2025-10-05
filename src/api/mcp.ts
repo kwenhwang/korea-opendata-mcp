@@ -3,8 +3,8 @@ import { MCPHandler } from '../lib';
 import type { MCPRequest } from '../lib';
 
 // 환경변수 검증
-if (!process.env.HRFCO_API_KEY) {
-  console.error('❌ HRFCO_API_KEY 환경변수가 설정되지 않았습니다.');
+if (!process.env.KoreaOpenData_API_KEY) {
+  console.error('❌ KoreaOpenData_API_KEY 환경변수가 설정되지 않았습니다.');
 }
 
 const mcpHandler = new MCPHandler();
@@ -26,7 +26,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // GET 요청 처리 (헬스체크)
   if (req.method === 'GET') {
     res.status(200).json({
-      message: 'HRFCO MCP Server (TypeScript) - Vercel',
+      message: 'KoreaOpenData MCP Server (TypeScript) - Vercel',
       version: '1.0.0',
       endpoints: {
         mcp: '/api/mcp',

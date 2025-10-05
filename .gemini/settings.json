@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "hrfco": {
-      "httpUrl": "https://hrfco-mcp-ts.vercel.app/api/mcp"
+      "httpUrl": "https://korea-opendata-mcp.vercel.app/api/mcp"
     }
   }
 }

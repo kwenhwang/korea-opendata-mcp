@@ -49,7 +49,7 @@ curl -X POST https://hrfco-mcp-lctuob0og-kewns-projects.vercel.app/api/mcp \
       "tools": {}  // ← 문제: 빈 객체
     },
     "serverInfo": {
-      "name": "hrfco-mcp-ts",
+      "name": "korea-opendata-mcp",
       "version": "1.0.0"
     }
   }

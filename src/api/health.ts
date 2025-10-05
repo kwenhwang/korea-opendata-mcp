@@ -12,7 +12,7 @@ export default async function health(req: VercelRequest, res: VercelResponse) {
   res.status(200).json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
-    service: 'HRFCO MCP Server',
+    service: 'KoreaOpenData MCP Server',
     version: '1.0.0',
     environment: 'vercel',
     features: [
