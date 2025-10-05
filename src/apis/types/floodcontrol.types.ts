@@ -47,9 +47,9 @@ export const STATION_CODE_MAPPING: Record<StationType, Record<string, string>> =
   dam: {
     '대청댐': '3008110',
     '대청호': '3008110',
-    '소양댐': '1010690',
-    '소양강댐': '1010690',
-    '소양호': '1010690',
+    '소양댐': '1012110',
+    '소양강댐': '1012110',
+    '소양호': '1012110',
     '충주댐': '1003110',
     '충주호': '1003110',
     '남강댐': '2018110',
@@ -63,7 +63,7 @@ export const STATION_CODE_MAPPING: Record<StationType, Record<string, string>> =
     '춘천댐': '1010320',
     '의암댐': '1013310',
     '청평댐': '1015310',
-    '팔당댐': '1010301',
+    '팔당댐': '1017310',
     '군남댐': '1021701',
     '한탄강댐': '1022701',
     '달방댐': '1302210',
@@ -174,3 +174,4 @@ export interface IntegratedResponse {
   };
   timestamp: string;
 }
+
