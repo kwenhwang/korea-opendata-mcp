@@ -112,39 +112,17 @@ export class StationManager {
   async searchByName(query: string, type?: 'waterlevel' | 'rainfall' | 'dam'): Promise<StationInfo[]> {
     await this.fetchAllStations();
     
-    const results: StationInfo[] = [];
-    const searchTypes = type ? [type] : ['waterlevel', 'rainfall', 'dam'] as const;
-    
+    const searchTypes = type ? [type] : ['dam', 'waterlevel', 'rainfall'] as const;
+
     for (const searchType of searchTypes) {
       const stations = this.stationCache.get(searchType) || [];
-      
-      // 정확한 매칭 우선
-      const exactMatches = stations.filter(station => 
-        station.name === query
-      );
-      
-      if (exactMatches.length > 0) {
-        results.push(...exactMatches);
-        continue;
+      const matches = this.findMatches(stations, query);
+      if (matches.length > 0) {
+        return matches;
       }
-      
-      // 부분 매칭
-      const partialMatches = stations.filter(station => 
-        (station.name && station.name.includes(query)) || 
-        (station.name && query.includes(station.name)) ||
-        (station.location && station.location.includes(query)) ||
-        (station.river_name && station.river_name.includes(query))
-      );
-      
-      results.push(...partialMatches);
     }
-    
-    // 중복 제거 (같은 코드의 관측소)
-    const uniqueResults = Array.from(
-      new Map(results.map(item => [item.code, item])).values()
-    );
-    
-    return uniqueResults;
+
+    return [];
   }
 
   /**
@@ -169,5 +147,27 @@ export class StationManager {
   async refreshCache(): Promise<void> {
     this.lastFetchTime = 0;
     await this.fetchAllStations();
+  }
+
+  private findMatches(stations: StationInfo[], query: string): StationInfo[] {
+    if (!stations.length) return [];
+
+    const exactMatches = stations.filter(station => station.name === query);
+    if (exactMatches.length > 0) {
+      return this.dedupeByCode(exactMatches);
+    }
+
+    const partialMatches = stations.filter(station =>
+      (station.name && station.name.includes(query)) ||
+      (station.name && query.includes(station.name)) ||
+      (station.location && station.location.includes(query)) ||
+      (station.river_name && station.river_name.includes(query))
+    );
+
+    return this.dedupeByCode(partialMatches);
+  }
+
+  private dedupeByCode(stations: StationInfo[]): StationInfo[] {
+    return Array.from(new Map(stations.map(item => [item.code, item])).values());
   }
 }

@@ -259,6 +259,9 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     try {
       const stationManager = StationManager.getInstance(this, { logger: this.logger });
       const searchResults = await stationManager.searchByName(query);
+      const prioritizedResults = searchResults.length > 1
+        ? [...searchResults].sort((a, b) => this.getStationPriority(a.type) - this.getStationPriority(b.type))
+        : searchResults;
 
       let waterSnapshot: WaterLevelRecord[] | null = null;
       let rainfallSnapshot: RainfallRecord[] | null = null;
@@ -344,7 +347,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
         return this.createErrorResponse(`'${query}' 관측소 정보를 찾을 수 없습니다.`);
       }
 
-      for (const station of searchResults) {
+      for (const station of prioritizedResults) {
         this.logger.debug('Evaluating station candidate', { station });
 
         if (station.type === 'dam') {
@@ -731,6 +734,19 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     }
 
     return Array.from(candidates);
+  }
+
+  private getStationPriority(type: StationType): number {
+    switch (type) {
+      case 'dam':
+        return 0;
+      case 'waterlevel':
+        return 1;
+      case 'rainfall':
+        return 2;
+      default:
+        return 3;
+    }
   }
 
   private resolveWaterLevelRecord(
