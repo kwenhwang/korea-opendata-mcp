@@ -1,4 +1,10 @@
-import { MCPRequest, MCPResponse, MCPTool, IntegratedResponse } from './types';
+import {
+  MCPRequest,
+  MCPResponse,
+  MCPTool,
+  IntegratedResponse,
+  RealEstateSearchResult,
+} from './types';
 import { KoreaOpenDataAPIClient } from './korea-opendata-api';
 
 export class MCPHandler {
@@ -79,6 +85,25 @@ export class MCPHandler {
           required: ['query'],
         },
       },
+      {
+        name: 'get_realestate_info',
+        description: '아파트 실거래가 조회 (지역명 또는 아파트명으로 검색)',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: '지역명 또는 아파트명',
+            },
+            yearMonth: {
+              type: 'string',
+              description: '거래년월 (YYYYMM) - 미입력 시 최신 월 기준',
+              pattern: '^\\d{6}$',
+            },
+          },
+          required: ['query'],
+        },
+      },
     ];
 
     return {
@@ -143,6 +168,30 @@ export class MCPHandler {
         result = await this.client.searchAndGetData(args.query);
         break;
 
+      case 'get_realestate_info':
+        if (!args) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: '필수 파라미터 "arguments"가 누락되었습니다.',
+            },
+          };
+        }
+        if (!args.query) {
+          return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: '필수 파라미터 "query"가 누락되었습니다.',
+            },
+          };
+        }
+        result = await this.client.getRealEstateInfo(args.query, args.yearMonth);
+        break;
+
       default:
         return {
           jsonrpc: '2.0',
@@ -164,6 +213,21 @@ export class MCPHandler {
             {
               type: 'text',
               text: this.formatIntegratedResponse(result),
+            },
+          ],
+        },
+      };
+    }
+
+    if (name === 'get_realestate_info') {
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: {
+          content: [
+            {
+              type: 'text',
+              text: this.formatRealEstateResponse(result as RealEstateSearchResult),
             },
           ],
         },
@@ -210,5 +274,60 @@ export class MCPHandler {
     formatted += `\n⏰ 조회 시간: ${new Date(response.timestamp).toLocaleString('ko-KR')}`;
     
     return formatted;
+  }
+
+  private formatRealEstateResponse(result: RealEstateSearchResult): string {
+    const { yearMonth } = result;
+    const year = yearMonth.slice(0, 4);
+    const month = yearMonth.slice(4, 6);
+    const periodLabel = yearMonth.length === 6 ? `${year}년 ${month}월` : '선택한 기간';
+
+    if (result.status === 'error') {
+      return `❌ ${result.message ?? '실거래가 정보를 조회할 수 없습니다.'}`;
+    }
+
+    if (result.transactions.length === 0) {
+      const fallback = result.message
+        ? `⚠️ ${result.message}`
+        : '⚠️ 해당 기간에 거래 데이터가 없습니다.';
+      return fallback;
+    }
+
+    const focusRegion = result.region
+      ? result.region.label.replace(/_/g, ' ')
+      : '여러 지역';
+    const filterLabel = result.apartmentFilter ? ` - ${result.apartmentFilter}` : '';
+
+    let output = `🏢 **${focusRegion}${filterLabel} ${periodLabel} 실거래가**\n\n`;
+
+    if (result.message) {
+      output += `ℹ️ ${result.message}\n\n`;
+    }
+
+    const topTransactions = result.transactions.slice(0, 5);
+
+    topTransactions.forEach((tx, index) => {
+      const priceWon = tx.priceWon.toLocaleString('ko-KR');
+      const priceTenThousand = tx.priceTenThousandWon.toLocaleString('ko-KR');
+      const areaSqm = tx.areaSquareMeter.toFixed(2);
+      const areaPyeong = tx.areaPyeong.toFixed(2);
+      const floorLabel = tx.floor !== null ? `${tx.floor}층` : '층 정보 없음';
+      const dealType = tx.dealType ? ` • 거래유형: ${tx.dealType}` : '';
+      const builtYear = tx.constructionYear ? ` • 준공: ${tx.constructionYear}년` : '';
+      const dealDate = tx.dealDate.replace(/-/g, '.');
+      const regionLabel = tx.regionLabel.replace(/_/g, ' ');
+
+      output += `${index + 1}. ${tx.apartmentName} (${regionLabel}) - ${dealDate}\n`;
+      output += `   • 거래금액: ${priceWon}원 (${priceTenThousand}만원)\n`;
+      output += `   • 전용면적: ${areaSqm}㎡ (${areaPyeong}평)\n`;
+      output += `   • ${floorLabel}${dealType}${builtYear}\n`;
+    });
+
+    if (result.transactions.length > topTransactions.length) {
+      output += `\n… 총 ${result.transactions.length}건 중 상위 ${topTransactions.length}건을 표시했습니다.`;
+    }
+
+    output += '\n\n출처: 국토교통부 실거래가 공개시스템';
+    return output;
   }
 }

@@ -19,7 +19,8 @@ export default async function health(req: VercelRequest, res: VercelResponse) {
       '통합 검색 기능 (get_water_info)',
       'ChatGPT 무한 반복 호출 방지',
       '실시간 수위 데이터 조회',
-      '관측소 코드 매핑'
+      '관측소 코드 매핑',
+      '아파트 실거래가 조회 (get_realestate_info)'
     ]
   });
 }

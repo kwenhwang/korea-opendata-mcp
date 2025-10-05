@@ -14,6 +14,16 @@ export {
   type StationType,
 } from '../apis/types/floodcontrol.types';
 
+export {
+  REGION_CODES,
+  type NormalizedTransaction,
+} from '../apis/types/realestate.types';
+
+export type {
+  RealEstateSearchResult,
+  RealEstateRegion,
+} from './korea-opendata-api';
+
 export interface MCPRequest {
   jsonrpc: string;
   id: string | number;
@@ -43,4 +53,3 @@ export interface MCPTool {
 
 // Retain z import for consumers relying on existing types
 export { z };
-
