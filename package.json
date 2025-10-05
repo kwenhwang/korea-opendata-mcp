@@ -1,5 +1,5 @@
 {
-  "name": "hrfco-mcp-server",
+  "name": "korea-opendata-mcp",
   "version": "1.0.0",
   "description": "HRFCO MCP Server in TypeScript",
   "main": "api/mcp.js",
