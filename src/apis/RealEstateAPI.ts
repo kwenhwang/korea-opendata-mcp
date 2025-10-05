@@ -26,10 +26,16 @@ export class RealEstateAPI extends BaseAPI<RealEstateConfig, RealEstateAPIRespon
   private readonly xmlParser: XMLParser;
 
   constructor(overrides: Partial<RealEstateConfig> = {}, logger: Logger = defaultLogger) {
+    const resolvedKey = overrides.apiKey
+      ?? overrides.serviceKey
+      ?? process.env.PUBLIC_DATA_API_KEY;
+
     const config = loadAPIConfig('RealEstate', {
       overrides: {
         baseUrl: DEFAULT_BASE_URL,
         authStrategy: AuthStrategy.ServiceKey,
+        apiKey: resolvedKey,
+        serviceKey: resolvedKey,
         ...overrides,
       },
       logger,
@@ -50,9 +56,9 @@ export class RealEstateAPI extends BaseAPI<RealEstateConfig, RealEstateAPIRespon
   }
 
   protected authenticate(context: AuthContext): AuthContext {
-    const serviceKey = this.config.serviceKey ?? this.config.apiKey;
+    const serviceKey = this.config.apiKey ?? this.config.serviceKey ?? process.env.PUBLIC_DATA_API_KEY;
     if (!serviceKey) {
-      throw new Error('국토교통부 실거래가 서비스키가 설정되어 있지 않습니다. 환경변수를 확인해주세요.');
+      throw new Error('공공데이터포털 API 키 (PUBLIC_DATA_API_KEY)가 필요합니다.');
     }
 
     return {

@@ -5,6 +5,8 @@ import { RealEstateAPI, type RealEstateConfig } from '../apis/RealEstateAPI';
 import type { NormalizedTransaction } from '../apis/types/realestate.types';
 
 export interface KoreaOpenDataClientOptions {
+  hrfcoApiKey?: string;
+  publicDataApiKey?: string;
   floodControlApiKey?: string;
   realEstateServiceKey?: string;
 }
@@ -34,18 +36,28 @@ export class KoreaOpenDataAPIClient {
   constructor(param?: ConstructorParam, logger: Logger = defaultLogger) {
     this.logger = logger;
 
-    const floodControlOverrides: Partial<FloodControlConfig> = {};
-    const realEstateOverrides: Partial<RealEstateConfig> = {};
+    let hrfcoKey: string | undefined;
+    let publicDataKey: string | undefined;
 
     if (typeof param === 'string') {
-      floodControlOverrides.apiKey = param;
+      hrfcoKey = param;
     } else if (param) {
-      if (param.floodControlApiKey) {
-        floodControlOverrides.apiKey = param.floodControlApiKey;
-      }
-      if (param.realEstateServiceKey) {
-        realEstateOverrides.serviceKey = param.realEstateServiceKey;
-      }
+      hrfcoKey = param.hrfcoApiKey
+        ?? param.floodControlApiKey
+        ?? undefined;
+      publicDataKey = param.publicDataApiKey
+        ?? param.realEstateServiceKey
+        ?? undefined;
+    }
+
+    const floodControlOverrides: Partial<FloodControlConfig> = {};
+    if (hrfcoKey) {
+      floodControlOverrides.apiKey = hrfcoKey;
+    }
+
+    const realEstateOverrides: Partial<RealEstateConfig> = {};
+    if (publicDataKey) {
+      realEstateOverrides.apiKey = publicDataKey;
     }
 
     this.floodControlApi = new FloodControlAPI(floodControlOverrides, logger);
@@ -222,4 +234,3 @@ export class KoreaOpenDataAPIClient {
       .trim();
   }
 }
-
