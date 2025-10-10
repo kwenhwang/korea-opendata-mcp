@@ -15,23 +15,37 @@ export class MCPHandler {
   }
 
   async handleRequest(request: MCPRequest): Promise<MCPResponse> {
+    const requestId = request?.id ?? `req_${Date.now()}`;
+
     try {
-      const { method, params, id } = request;
+      const method = request?.method;
+      const params = request?.params;
+
+      if (!method) {
+        return {
+          jsonrpc: '2.0',
+          id: requestId,
+          error: {
+            code: -32600,
+            message: 'Missing method in request',
+          },
+        };
+      }
 
       switch (method) {
         case 'initialize':
-          return this.handleInitialize(id);
+          return this.handleInitialize(requestId);
         
         case 'tools/list':
-          return this.handleToolsList(id);
+          return this.handleToolsList(requestId);
         
         case 'tools/call':
-          return await this.handleToolsCall(id, params);
+          return await this.handleToolsCall(requestId, params);
         
         default:
           return {
             jsonrpc: '2.0',
-            id,
+            id: requestId,
             error: {
               code: -32601,
               message: `Unknown method: ${method}`,
@@ -41,7 +55,7 @@ export class MCPHandler {
     } catch (error) {
       return {
         jsonrpc: '2.0',
-        id: request.id,
+        id: requestId,
         error: {
           code: -32603,
           message: `Internal error: ${error instanceof Error ? error.message : 'Unknown error'}`,
@@ -73,7 +87,7 @@ export class MCPHandler {
     const tools: MCPTool[] = [
       {
         name: 'get_water_info',
-        description: '한국 댐·수위·강수량 실시간 조회 - 방류량, 유입량, 저수율, 홍수 경보, 우량 데이터 통합 제공',
+        description: '한국 댐 종합정보 조회 - 방류량, 유입량, 저수율, 수위, 저수량, 수계별 관련댐 정보 제공',
         inputSchema: {
           type: 'object',
           properties: {

@@ -2,8 +2,9 @@ import type { Logger } from '../utils/logger';
 import { logger as defaultLogger } from '../utils/logger';
 import { BaseAPI } from './base/BaseAPI';
 import { loadAPIConfig } from './base/config';
-import type { AuthContext, RequestOptions } from './base/types';
+import type { AuthContext } from './base/types';
 import { AuthStrategy, type APIConfig } from './base/types';
+import { parseStringPromise } from 'xml2js';
 import {
   Observatory,
   WaterLevelData,
@@ -13,8 +14,15 @@ import {
   type StationType,
 } from './types/floodcontrol.types';
 import { StationManager } from '../lib/station-manager';
+import {
+  DAM_CAPACITY_DATA,
+  calculateStorageRate,
+  getWatershedDams,
+  getDamCapacityInfo,
+} from './data/damCapacity';
+import { TimeSeriesAnalyzer } from './utils/timeSeriesAnalyzer';
 
-const DEFAULT_BASE_URL = 'http://api.hrfco.go.kr';
+const DEFAULT_BASE_URL = 'https://api.hrfco.go.kr';
 
 export interface FloodControlConfig extends APIConfig {}
 
@@ -125,47 +133,133 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     return data;
   }
 
-  protected async request<T = unknown>(options: RequestOptions): Promise<T> {
-    const endpoint = this.composeEndpoint(options.endpoint);
-    const response = await super.request({
-      ...options,
-      endpoint,
-      expects: options.expects ?? 'json',
+  private get apiKey(): string {
+    const apiKey = this.config.apiKey ?? process.env.HRFCO_API_KEY;
+    if (!apiKey) {
+      throw new Error('홍수통제소 API 키 (HRFCO_API_KEY)가 필요합니다.');
+    }
+    return apiKey;
+  }
+
+  private buildApiUrl(endpoint: string, params: Record<string, string | number | undefined> = {}): string {
+    const base = this.getBaseUrl().replace(/\/$/, '');
+    const path = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const url = new URL(`${base}/${this.apiKey}${path}`);
+
+    Object.entries(params).forEach(([key, value]) => {
+      if (value === undefined || value === null || value === '') return;
+      url.searchParams.set(key, String(value));
     });
-    return response as T;
+
+    return url.toString();
+  }
+
+  private async requestXml(
+    endpoint: string,
+    params: Record<string, string | number | undefined> = {},
+    expects: 'text' | 'xml' = 'xml',
+  ): Promise<any> {
+    const url = this.buildApiUrl(endpoint, params);
+    const controller = new AbortController();
+    const timeoutMs = this.config.timeout ?? 10000;
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      this.logger.debug('HRFCO XML request', {
+        url,
+        params: Object.keys(params),
+      });
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/xml',
+          'User-Agent': 'HRFCO-MCP-Client/1.0',
+        },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`HRFCO API 오류: ${response.status} ${response.statusText}`);
+      }
+
+      const raw = await response.text();
+
+      if (expects === 'text') {
+        return raw;
+      }
+
+      return await this.parseXmlResponse(raw);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('HRFCO API 요청 시간이 초과되었습니다.');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private async parseXmlResponse(xmlData: string): Promise<any> {
+    try {
+      return await parseStringPromise(xmlData, {
+        explicitArray: false,
+        ignoreAttrs: false,
+        trim: true,
+        explicitRoot: false,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`XML parsing failed: ${message}`);
+    }
+  }
+
+  private extractItems(parsed: any): any[] {
+    if (!parsed) return [];
+
+    const candidates = [
+      parsed?.response?.body?.items?.item,
+      parsed?.body?.items?.item,
+      parsed?.items?.item,
+      parsed?.content?.item,
+      parsed?.list?.item,
+      parsed?.item,
+    ];
+
+    for (const candidate of candidates) {
+      if (candidate === undefined || candidate === null) continue;
+      if (Array.isArray(candidate)) return candidate;
+      return [candidate];
+    }
+
+    if (parsed?.content) {
+      const content = parsed.content;
+      if (Array.isArray(content)) {
+        return content.flatMap((entry: any) => this.extractItems(entry));
+      }
+
+      if (typeof content === 'object') {
+        const values = Object.values(content)
+          .flatMap(value => (Array.isArray(value) ? value : [value]))
+          .filter(Boolean);
+        if (values.length > 0) {
+          return values as any[];
+        }
+      }
+    }
+
+    if (Array.isArray(parsed)) return parsed;
+
+    return [];
   }
 
   async getObservatories(hydroType: StationType = 'waterlevel'): Promise<Observatory[]> {
-    const data = await this.request<{ content?: ObservatoryRawRecord[] }>({
-      endpoint: `${hydroType}/info.json`,
-    });
-    const records = Array.isArray(data?.content) ? data.content : [];
+    const parsed = await this.requestXml(`/${hydroType}/info.xml`);
+    const records = this.extractItems(parsed);
 
-    const observatories: Observatory[] = records
-      .filter((item): item is ObservatoryRawRecord => Boolean(item))
-      .map(item => ({
-        obs_code: item.wlobscd || item.rfobscd || item.dmobscd || '',
-        obs_name: item.obsnm || item.rfobsnm || item.damnm || (item.rfobscd ? `강우량관측소_${item.rfobscd}` : ''),
-        river_name: item.river_name || item.rivername,
-        location: item.addr || item.location,
-        latitude: this.convertDMSToDecimal(item.lat),
-        longitude: this.convertDMSToDecimal(item.lon),
-        agency: item.agcnm,
-        ground_level: item.gdt ? parseFloat(item.gdt) : undefined,
-        warning_levels: item.attwl || item.wrnwl || item.almwl || item.srswl || item.pfh
-          ? {
-              attention: item.attwl ? parseFloat(item.attwl) : undefined,
-              warning: item.wrnwl ? parseFloat(item.wrnwl) : undefined,
-              alarm: item.almwl ? parseFloat(item.almwl) : undefined,
-              serious: item.srswl ? parseFloat(item.srswl) : undefined,
-              flood_control: item.pfh ? parseFloat(item.pfh) : undefined,
-            }
-          : undefined,
-        hydro_type: hydroType,
-      }))
-      .filter(obs => obs.obs_code && obs.obs_name);
-
-    return observatories;
+    return records
+      .map(item => this.normalizeObservatoryRecord(item, hydroType))
+      .filter((obs): obs is Observatory => Boolean(obs?.obs_code && obs?.obs_name));
   }
 
   async getRainfallStations(): Promise<Observatory[]> {
@@ -173,48 +267,30 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
   }
 
   async getStationList(endpoint: string): Promise<any[]> {
-    const data = await this.request<any>({ endpoint });
-    let stations: any[] = [];
+    const normalized = endpoint.replace(/^\//, '');
+    const [hydroType, resource, timeTypeRaw] = normalized.split('/');
 
-    if (data?.result) stations = data.result;
-    else if (data?.content) stations = data.content;
-    else if (data?.data) stations = data.data;
-    else if (Array.isArray(data)) stations = data;
-    else {
-      this.logger.warn('Unknown API response structure', { endpoint, keys: Object.keys(data ?? {}) });
+    if (!hydroType) {
+      this.logger.warn('Unknown station list endpoint pattern', { endpoint });
       return [];
     }
 
-    return stations.map((station: any) => {
-      if (endpoint.includes('waterlevel')) {
-        return {
-          obs_code: station.wlobscd,
-          obs_name: station.obsnm,
-          location: station.addr,
-          wl_obs_code: station.wlobscd,
-          wl_obs_name: station.obsnm,
-        };
-      }
-      if (endpoint.includes('rainfall')) {
-        return {
-          obs_code: station.rfobscd,
-          obs_name: station.rfobsnm || `강우량관측소_${station.rfobscd}`,
-          location: station.addr,
-          rf_obs_code: station.rfobscd,
-          rf_obs_name: station.rfobsnm || `강우량관측소_${station.rfobscd}`,
-        };
-      }
-      if (endpoint.includes('dam')) {
-        return {
-          obs_code: station.dmobscd,
-          obs_name: station.damnm || `댐_${station.dmobscd}`,
-          location: station.addr,
-          damcode: station.dmobscd,
-          damnm: station.damnm || `댐_${station.dmobscd}`,
-        };
-      }
-      return station;
-    });
+    let xmlPath: string | null = null;
+
+    if (resource?.startsWith('info')) {
+      xmlPath = `/${hydroType}/info.xml`;
+    } else if (resource?.startsWith('list')) {
+      const timeType = (timeTypeRaw?.split('.')?.[0] ?? '10M').toUpperCase();
+      xmlPath = `/${hydroType}/list/${timeType}.xml`;
+    }
+
+    if (!xmlPath) {
+      this.logger.warn('Unsupported station list resource', { endpoint });
+      return [];
+    }
+
+    const parsed = await this.requestXml(xmlPath);
+    return this.extractItems(parsed);
   }
 
   async getWaterLevelData(
@@ -257,6 +333,42 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     }
 
     return [result.data];
+  }
+
+  async getDamTimeSeries(timeType: '10M' | '1H' | '1D' = '1H'): Promise<any[]> {
+    const parsed = await this.requestXml(`/dam/list/${timeType}.xml`);
+    const items = this.extractItems(parsed);
+    return items.map(item => this.normalizeDamSeriesRecord(item)).filter(Boolean);
+  }
+
+  async getDamTimeSeriesFiltered(
+    damCode: string,
+    timeType: '10M' | '1H' | '1D' = '1H',
+  ): Promise<any[]> {
+    const series = await this.getDamTimeSeries(timeType);
+    return series.filter(item => item.obsCode === damCode);
+  }
+
+  async getWaterLevelTimeSeries(
+    stationCode: string,
+    timeType: '10M' | '1H' | '1D' = '1H',
+  ): Promise<any[]> {
+    const parsed = await this.requestXml(`/waterlevel/list/${timeType}.xml`);
+    const items = this.extractItems(parsed);
+    return items
+      .map(item => this.normalizeWaterLevelSeriesRecord(item))
+      .filter(entry => entry.obsCode === stationCode);
+  }
+
+  async getRainfallTimeSeries(
+    stationCode: string,
+    timeType: '10M' | '1H' | '1D' = '1H',
+  ): Promise<any[]> {
+    const parsed = await this.requestXml(`/rainfall/list/${timeType}.xml`);
+    const items = this.extractItems(parsed);
+    return items
+      .map(item => this.normalizeRainfallSeriesRecord(item))
+      .filter(entry => entry.obsCode === stationCode);
   }
 
   searchObservatory(query: string, observatories: Observatory[]): Observatory[] {
@@ -341,7 +453,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
           ]);
 
           if (damResult || waterResult) {
-            return this.createIntegratedDamResponse(
+            return await this.createIntegratedDamResponse(
               query,
               damResult?.code ?? waterResult?.code ?? '',
               waterResult?.code ?? damResult?.code ?? '',
@@ -397,7 +509,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
           );
 
           if (damResult || waterResult) {
-            return this.createIntegratedDamResponse(
+            return await this.createIntegratedDamResponse(
               station.name,
               damResult?.code ?? station.code,
               waterResult?.code ?? damResult?.code ?? station.code,
@@ -465,27 +577,77 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     }
   }
 
-  private composeEndpoint(endpoint: string): string {
-    const trimmed = endpoint.replace(/^\//, '');
-
-    if (this.config.authStrategy === AuthStrategy.ServiceKey) {
-      return trimmed;
-    }
-
-    const apiKey = this.config.apiKey ?? this.config.serviceKey ?? process.env.HRFCO_API_KEY;
-    if (!apiKey) {
-      throw new Error('홍수통제소 API 키 (HRFCO_API_KEY)가 필요합니다.');
-    }
-
-    return `${apiKey}/${trimmed}`;
-  }
-
   private convertDMSToDecimal(dmsString?: string): number {
     if (!dmsString || dmsString.trim() === '') return 0;
     const parts = dmsString.trim().split('-').map(part => parseFloat(part.trim()));
     if (parts.length !== 3 || parts.some(part => Number.isNaN(part))) return 0;
     const [degrees, minutes, seconds] = parts;
     return degrees + minutes / 60 + seconds / 3600;
+  }
+
+  private normalizeObservatoryRecord(item: any, hydroType: StationType): Observatory | null {
+    if (!item) return null;
+
+    const obsCode =
+      item.wlobscd ??
+      item.wlObsCd ??
+      item.rfobscd ??
+      item.rfObsCd ??
+      item.dmobscd ??
+      item.damObsCd ??
+      item.obsCode ??
+      '';
+
+    const name =
+      item.obsnm ??
+      item.obsNm ??
+      item.rfobsnm ??
+      item.rfObsNm ??
+      item.damnm ??
+      item.damNm ??
+      item.obsname ??
+      item.obsName ??
+      '';
+
+    if (!obsCode || !name) return null;
+
+    const toNumber = (value: any) => {
+      const parsed = this.safeParseNumber(value);
+      return parsed === null ? undefined : parsed;
+    };
+
+    const warningLevelsRaw =
+      item.attwl ||
+      item.wrnwl ||
+      item.almwl ||
+      item.srswl ||
+      item.pfh
+        ? {
+            attention: toNumber(item.attwl ?? item.attention),
+            warning: toNumber(item.wrnwl ?? item.warning),
+            alarm: toNumber(item.almwl ?? item.alarm),
+            serious: toNumber(item.srswl ?? item.serious),
+            flood_control: toNumber(item.pfh ?? item.floodControl),
+          }
+        : undefined;
+
+    const warningLevels =
+      warningLevelsRaw && Object.values(warningLevelsRaw).some(value => value !== undefined)
+        ? warningLevelsRaw
+        : undefined;
+
+    return {
+      obs_code: obsCode,
+      obs_name: name,
+      river_name: item.river_name || item.riverName,
+      location: item.addr || item.address || item.location,
+      latitude: toNumber(item.lat ?? item.latitude),
+      longitude: toNumber(item.lon ?? item.longitude),
+      agency: item.agcnm || item.agcNm || item.agency,
+      ground_level: toNumber(item.gdt ?? item.groundLevel),
+      warning_levels: warningLevels,
+      hydro_type: hydroType,
+    };
   }
 
   private findStationCode(query: string, type: 'dam' | 'waterlevel' | 'rainfall' = 'waterlevel'): string | null {
@@ -531,18 +693,38 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     };
   }
 
-  private createIntegratedDamResponse(
+  private async createIntegratedDamResponse(
     damName: string,
     damCode: string,
     waterLevelCode: string,
     damData: any,
     waterLevelData: any,
-  ): IntegratedResponse {
-    const primaryData = damData || waterLevelData;
-    const currentLevel = `${primaryData.water_level.toFixed(1)}m`;
-    const status = this.determineStatus(primaryData.water_level);
-    const trend = this.determineTrend(primaryData.water_level);
-    const lastUpdated = this.parseObsTime(primaryData.obs_time);
+  ): Promise<IntegratedResponse> {
+    const primaryData = damData ?? waterLevelData ?? null;
+    const waterLevelValue = Number.isFinite(primaryData?.water_level)
+      ? primaryData.water_level
+      : null;
+    const inflowValue = Number.isFinite(damData?.inflow) ? damData.inflow : null;
+    const outflowValue = Number.isFinite(damData?.outflow) ? damData.outflow : null;
+    const currentStorageValue = Number.isFinite(damData?.current_storage)
+      ? damData.current_storage
+      : null;
+    const observationTime =
+      typeof primaryData?.obs_time === 'string' ? primaryData.obs_time : '';
+
+    const currentLevel = waterLevelValue !== null ? `${waterLevelValue.toFixed(1)}m` : '정보 없음';
+    const status = waterLevelValue !== null ? this.determineStatus(waterLevelValue) : '정보 없음';
+    const trend = waterLevelValue !== null ? this.determineTrend(waterLevelValue) : '정보 없음';
+    const lastUpdated = this.parseObsTime(observationTime);
+    const formattedTimestamp = this.formatToKoreanTime(observationTime);
+
+    const storageRateValue =
+      currentStorageValue !== null ? calculateStorageRate(currentStorageValue, damCode) : null;
+    const damCapacity = getDamCapacityInfo(damCode);
+    const relatedDamEntries = getWatershedDams(damCode);
+    const relatedStations = relatedDamEntries.map(dam => ({ name: dam.name, code: dam.code }));
+    const relatedDamNames = relatedDamEntries.map(dam => dam.name);
+    const watershedLabel = damCapacity?.watershed ?? '동일 수계';
 
     const damInfo: PrimaryStation = {
       name: damName,
@@ -553,45 +735,487 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
       last_updated: lastUpdated,
     };
 
-    if (damData) {
-      damInfo.inflow = `${damData.inflow.toFixed(1)}m³/s`;
-      damInfo.outflow = `${damData.outflow.toFixed(1)}m³/s`;
-      damInfo.current_storage = `${damData.current_storage.toFixed(1)}백만m³`;
-      if (damData.water_level_analysis) {
-        damInfo.water_level_analysis = damData.water_level_analysis;
-        damInfo.flood_limit_level = `${damData.flood_limit_level}m`;
+    if (inflowValue !== null) {
+      damInfo.inflow = `${inflowValue.toFixed(1)}m³/s`;
+    }
+    if (outflowValue !== null) {
+      damInfo.outflow = `${outflowValue.toFixed(1)}m³/s`;
+    }
+    if (currentStorageValue !== null) {
+      damInfo.current_storage = `${currentStorageValue.toFixed(1)}백만㎥`;
+    }
+    if (storageRateValue !== null) {
+      damInfo.storage_rate = `${storageRateValue}%`;
+    }
+    if (damCapacity) {
+      const formattedCapacity = this.formatCapacity(damCapacity.totalCapacity);
+      if (formattedCapacity) {
+        damInfo.total_storage = `${formattedCapacity}백만㎥`;
       }
+    }
+    if (damData?.water_level_analysis) {
+      damInfo.water_level_analysis = damData.water_level_analysis;
+      damInfo.flood_limit_level = `${damData.flood_limit_level}m`;
     }
 
     const waterLevelInfo: WaterLevelStation | undefined = waterLevelData
       ? {
           name: `${damName} 수위관측소`,
           code: waterLevelCode,
-          current_level: `${waterLevelData.water_level.toFixed(1)}m`,
+          current_level: Number.isFinite(waterLevelData.water_level)
+            ? `${waterLevelData.water_level.toFixed(1)}m`
+            : '정보 없음',
           last_updated: this.parseObsTime(waterLevelData.obs_time),
         }
       : undefined;
 
-    let directAnswer = `${damName}의 현재 수위는 ${currentLevel}이며, ${status} 상태입니다.`;
-    if (damData) {
-      directAnswer += ` 유입량은 ${damInfo.inflow}, 방류량은 ${damInfo.outflow}입니다.`;
-      if (damData.water_level_analysis && damData.water_level_analysis.status !== '정보부족') {
-        directAnswer += ` ${damData.water_level_analysis.message}`;
-      }
+    const summaryParts: string[] = [];
+    if (outflowValue !== null) {
+      summaryParts.push(`방류량 ${outflowValue.toFixed(1)}m³/s`);
     }
+    if (storageRateValue !== null) {
+      summaryParts.push(`저수율 ${storageRateValue}%`);
+    }
+    const summary =
+      summaryParts.length > 0
+        ? `${damName} ${summaryParts.join(', ')}`
+        : `${damName} 현재 수위는 ${currentLevel}입니다`;
+
+    const directAnswer = await this.buildDamNarrative({
+      damName,
+      damCode,
+      waterLevel: waterLevelValue,
+      inflowRate: inflowValue,
+      outflowRate: outflowValue,
+      currentStorage: currentStorageValue,
+      storageRate: storageRateValue,
+      observationTime,
+      relatedDamNames,
+      watershedLabel,
+    });
+
+    const fallbackRelated = this.getRelatedStations(damName, damCode);
+    const combinedRelated =
+      relatedStations.length > 0
+        ? relatedStations
+        : fallbackRelated;
 
     return {
       status: 'success',
-      summary: `${damName} 현재 수위는 ${currentLevel}입니다`,
+      summary,
       direct_answer: directAnswer,
       detailed_data: {
         type: 'dam',
         primary_station: damInfo,
         water_level_station: waterLevelInfo,
-        related_stations: this.getRelatedStations(damName),
+        related_stations: combinedRelated,
       },
-      timestamp: new Date().toISOString(),
+      timestamp: formattedTimestamp !== '정보 없음'
+        ? formattedTimestamp
+        : new Date().toISOString(),
     };
+  }
+
+  private async getComprehensiveAnalysis(damCode: string) {
+    const [realtimeRaw, hourlyRaw, dailyRaw] = await Promise.all([
+      this.getDamTimeSeriesFiltered(damCode, '10M'),
+      this.getDamTimeSeriesFiltered(damCode, '1H'),
+      this.getDamTimeSeriesFiltered(damCode, '1D'),
+    ]);
+
+    const realtime = this.normalizeDamTimeSeries(realtimeRaw).slice(0, 36);
+    const hourly = this.normalizeDamTimeSeries(hourlyRaw).slice(0, 24);
+    const daily = this.normalizeDamTimeSeries(dailyRaw).slice(0, 30);
+
+    const shortTermTrend = TimeSeriesAnalyzer.analyzeTrend(realtime, 'swl').direction;
+    const mediumTermTrend = TimeSeriesAnalyzer.analyzeTrend(hourly, 'swl').direction;
+    const longTermTrend = TimeSeriesAnalyzer.analyzeTrend(daily, 'swl').direction;
+
+    return {
+      realtime,
+      hourly,
+      daily,
+      trends: {
+        shortTerm: shortTermTrend,
+        mediumTerm: mediumTermTrend,
+        longTerm: longTermTrend,
+      },
+    };
+  }
+
+  private async buildDamNarrative({
+    damName,
+    damCode,
+    waterLevel,
+    inflowRate,
+    outflowRate,
+    currentStorage,
+    storageRate,
+    observationTime,
+    relatedDamNames,
+    watershedLabel,
+  }: {
+    damName: string;
+    damCode: string;
+    waterLevel: number | null;
+    inflowRate: number | null;
+    outflowRate: number | null;
+    currentStorage: number | null;
+    storageRate: number | null;
+    observationTime?: string;
+    relatedDamNames?: string[];
+    watershedLabel: string;
+  }): Promise<string> {
+    const snapshot = this.formatDamSnapshot({
+      damName,
+      damCode,
+      waterLevel,
+      inflowRate,
+      outflowRate,
+      currentStorage,
+      storageRate,
+      observationTime,
+      relatedDamNames,
+      watershedLabel,
+    });
+
+    try {
+      const analysis = await this.getComprehensiveAnalysis(damCode);
+      const realtimeSeries = analysis.realtime;
+      const hourlySeries = analysis.hourly;
+      const dailySeries = analysis.daily;
+
+      const storageRateValue =
+        storageRate !== null
+          ? storageRate
+          : currentStorage !== null
+            ? calculateStorageRate(currentStorage, damCode)
+            : null;
+
+      const storageBar = this.buildStorageBar(storageRateValue);
+      const formattedTime = this.formatToKoreanTime(observationTime);
+      const watershedRelated = relatedDamNames && relatedDamNames.length > 0
+        ? relatedDamNames.join(', ')
+        : '정보 없음';
+
+      const realtimeTrend = TimeSeriesAnalyzer.analyzeTrend(realtimeSeries, 'swl');
+      const dischargeTrend = TimeSeriesAnalyzer.analyzeTrend(realtimeSeries, 'otf');
+      const inflowTrend = TimeSeriesAnalyzer.analyzeTrend(realtimeSeries, 'inf');
+
+      const realtimeAverageOutflow = this.calculateAverage(realtimeSeries, 'otf');
+      const hourlyMaxOutflow = this.findMax(hourlySeries, 'otf');
+      const dailyAverageStorage = this.calculateAverage(dailySeries, 'fwVol');
+
+      const shortTermTrend = analysis.trends.shortTerm;
+      const mediumTermTrend = analysis.trends.mediumTerm;
+      const longTermTrend = analysis.trends.longTerm;
+
+      const recommendation = this.generateRecommendation(
+        storageRateValue,
+        analysis.trends,
+      );
+
+      return [
+        `🌊 **${damName} 종합 분석**`,
+        '',
+        '📊 **현재 상황 (실시간)**',
+        storageRateValue !== null
+          ? `저수율: ${storageBar} ${storageRateValue}%`
+          : '저수율: 정보 없음',
+        `수위: ${this.formatMaybeNumber(waterLevel, 'm')}`,
+        `방류량: ${this.formatMaybeNumber(outflowRate, ' m³/s')}`,
+        `유입량: ${this.formatMaybeNumber(inflowRate, ' m³/s')}`,
+        '',
+        '📈 **시계열 분석**',
+        `단기 추세 (6시간): ${shortTermTrend} ${this.getTrendEmoji(shortTermTrend)}`,
+        `중기 추세 (24시간): ${mediumTermTrend} ${this.getTrendEmoji(mediumTermTrend)}`,
+        `장기 추세 (30일): ${longTermTrend} ${this.getTrendEmoji(longTermTrend)}`,
+        '',
+        '📋 **운영 패턴**',
+        `6시간 평균 방류량: ${this.formatMaybeNumber(realtimeAverageOutflow, ' m³/s', 2)}`,
+        `24시간 최대 방류량: ${this.formatMaybeNumber(hourlyMaxOutflow, ' m³/s')}`,
+        dailyAverageStorage !== null
+          ? `30일 평균 저수량: ${this.formatMaybeNumber(dailyAverageStorage, ' 백만㎥', 1)}`
+          : '30일 평균 저수량: 데이터 없음',
+        '',
+        '💡 **전문가 해석**',
+        `운영 상태: ${this.interpretOperationStatus({
+          realtimeTrend,
+          dischargeTrend,
+          inflowTrend,
+          storageRate: storageRateValue,
+        })}`,
+        `향후 전망: ${this.generateForecast({
+          shortTerm: shortTermTrend,
+          mediumTerm: mediumTermTrend,
+          longTerm: longTermTrend,
+        })}`,
+        `권고사항: ${recommendation}`,
+        '',
+        `🏞️ **${watershedLabel} 주요 댐**: ${watershedRelated}`,
+        '',
+        '🕐 **분석 기준**: 실시간·1시간·1일 단위 통합 분석',
+        '💡 **데이터 제공**: 홍수통제소',
+      ].join('\n');
+    } catch (error) {
+      this.logger.warn('Dam time-series analysis failed', {
+        damCode,
+        error: error instanceof Error ? error.message : error,
+      });
+      return snapshot;
+    }
+  }
+
+  private formatDamSnapshot({
+    damName,
+    damCode,
+    waterLevel,
+    inflowRate,
+    outflowRate,
+    currentStorage,
+    storageRate,
+    observationTime,
+    relatedDamNames,
+    watershedLabel,
+  }: {
+    damName: string;
+    damCode: string;
+    waterLevel: number | null;
+    inflowRate: number | null;
+    outflowRate: number | null;
+    currentStorage: number | null;
+    storageRate: number | null;
+    observationTime?: string;
+    relatedDamNames?: string[];
+    watershedLabel: string;
+  }): string {
+    const normalizedStorageRate =
+      storageRate !== null
+        ? storageRate
+        : currentStorage !== null
+          ? calculateStorageRate(currentStorage, damCode)
+          : null;
+    const damCapacity = getDamCapacityInfo(damCode);
+    const relatedDams =
+      relatedDamNames && relatedDamNames.length > 0
+        ? relatedDamNames
+        : getWatershedDams(damCode).map(dam => dam.name);
+    const koreanTime = this.formatToKoreanTime(observationTime);
+
+    const metrics: string[] = [];
+    if (waterLevel !== null) {
+      metrics.push(`- 현재 수위: ${waterLevel.toFixed(1)}m`);
+    }
+    if (outflowRate !== null) {
+      metrics.push(`- 방류량: ${outflowRate.toFixed(1)} m³/s`);
+    }
+    if (inflowRate !== null) {
+      metrics.push(`- 유입량: ${inflowRate.toFixed(1)} m³/s`);
+    }
+    if (currentStorage !== null) {
+      metrics.push(`- 현재 저수량: ${currentStorage.toFixed(1)} 백만㎥`);
+    }
+    if (normalizedStorageRate !== null) {
+      metrics.push(`- 저수율: ${normalizedStorageRate}%`);
+    }
+    if (damCapacity) {
+      const capacityText = this.formatCapacity(damCapacity.totalCapacity);
+      if (capacityText) {
+        metrics.push(`- 총저수용량: ${capacityText} 백만㎥`);
+      }
+    }
+
+    const storageStatus = this.getStorageStatus(normalizedStorageRate);
+    const relatedText = relatedDams.length > 0 ? relatedDams.join(', ') : '정보 없음';
+
+    return [
+      `🌊 **${damName} 종합 현황**`,
+      '',
+      '📊 **주요 지표**',
+      metrics.length > 0 ? metrics.join('\n') : '- 데이터 없음',
+      '',
+      `📈 **저수 상태**: ${storageStatus}`,
+      '',
+      `🏞️ **${watershedLabel} 주요 댐**: ${relatedText}`,
+      '',
+      `🕐 **측정시각**: ${koreanTime}`,
+      '💡 **데이터 제공**: 홍수통제소',
+    ].join('\n');
+  }
+
+  private normalizeDamTimeSeries(data: any[]): any[] {
+    if (!Array.isArray(data)) return [];
+
+    return data
+      .filter(Boolean)
+      .sort((a, b) => this.parseTimestampNumber(b) - this.parseTimestampNumber(a));
+  }
+
+  private parseTimestampNumber(entry: any): number {
+    const candidate =
+      typeof entry?.ymdhm === 'string'
+        ? entry.ymdhm
+        : typeof entry?.obs_time === 'string'
+          ? entry.obs_time
+          : typeof entry?.obsYmdhm === 'string'
+            ? entry.obsYmdhm
+            : typeof entry?.timestamp === 'string'
+              ? entry.timestamp
+              : '';
+
+    if (/^\d{12}$/.test(candidate)) {
+      return Number.parseInt(candidate, 10);
+    }
+
+    const date = new Date(candidate);
+    if (!Number.isNaN(date.getTime())) {
+      return date.getTime();
+    }
+
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  private safeParseNumber(value: any, fallback: number | null = null): number | null {
+    if (value === undefined || value === null || value === '') return fallback;
+    const parsed = Number.parseFloat(String(value));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  private buildStorageBar(storageRate: number | null): string {
+    if (storageRate === null) return '정보 없음';
+    const segments = Math.max(0, Math.min(10, Math.round(storageRate / 10)));
+    return '🟦'.repeat(segments) + '⬜'.repeat(10 - segments);
+  }
+
+  private formatMaybeNumber(
+    value: number | null | undefined,
+    unit: string,
+    fractionDigits = 1,
+  ): string {
+    if (!Number.isFinite(value)) return '정보 없음';
+    return `${(value as number).toFixed(fractionDigits)}${unit}`;
+  }
+
+  private formatDelta(value: number | null, unit: string): string {
+    if (!Number.isFinite(value)) return '데이터 없음';
+    if (Math.abs(value as number) < 0.05) return '변화 없음';
+    const signed = (value as number) > 0 ? '+' : '';
+    return `${signed}${(value as number).toFixed(1)}${unit}`;
+  }
+
+  private getTrendEmoji(direction: '상승' | '하강' | '안정'): string {
+    switch (direction) {
+      case '상승':
+        return '🔼';
+      case '하강':
+        return '🔽';
+      default:
+        return '➡️';
+    }
+  }
+
+  private calculateAverage(data: any[], field: string): number | null {
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const values = data
+      .map(entry => this.safeParseNumber(entry?.[field]))
+      .filter((value): value is number => value !== null);
+
+    if (values.length === 0) return null;
+    const sum = values.reduce((acc, value) => acc + value, 0);
+    return sum / values.length;
+  }
+
+  private findMax(data: any[], field: string): number | null {
+    if (!Array.isArray(data) || data.length === 0) return null;
+    const values = data
+      .map(entry => this.safeParseNumber(entry?.[field]))
+      .filter((value): value is number => value !== null);
+
+    if (values.length === 0) return null;
+    return Math.max(...values);
+  }
+
+  private interpretOperationStatus(context: {
+    realtimeTrend: ReturnType<typeof TimeSeriesAnalyzer.analyzeTrend>;
+    dischargeTrend: ReturnType<typeof TimeSeriesAnalyzer.analyzeTrend>;
+    inflowTrend: ReturnType<typeof TimeSeriesAnalyzer.analyzeTrend>;
+    storageRate: number | null;
+  }): string {
+    const { realtimeTrend, dischargeTrend, inflowTrend, storageRate } = context;
+
+    if (storageRate !== null && storageRate >= 80) {
+      return '💧 풍부 - 저수량이 충분하여 안정적인 운영이 가능합니다.';
+    }
+    if (storageRate !== null && storageRate < 30) {
+      return '⚠️ 부족 - 저수율이 낮아 보수적인 방류 운영이 필요합니다.';
+    }
+
+    if (dischargeTrend.direction === '상승' && inflowTrend.direction !== '상승') {
+      return '🔼 방류량 증가 - 하류 수위 조절 또는 예비방류 중입니다.';
+    }
+
+    if (realtimeTrend.direction === '하강' && dischargeTrend.direction === '상승') {
+      return '✅ 수위 하강 - 방류를 통해 저수위 조절이 진행 중입니다.';
+    }
+
+    if (realtimeTrend.direction === '상승' && inflowTrend.direction === '상승') {
+      return '🌧️ 유입량 증가 - 상류 강우 영향으로 수위 상승이 감지됩니다.';
+    }
+
+    return '➡️ 안정 - 급격한 변화 없이 정상 운영 중입니다.';
+  }
+
+  private generateForecast(trends: {
+    shortTerm: '상승' | '하강' | '안정';
+    mediumTerm: '상승' | '하강' | '안정';
+    longTerm: '상승' | '하강' | '안정';
+  }): string {
+    const { shortTerm, mediumTerm, longTerm } = trends;
+
+    if (shortTerm === '상승' && mediumTerm === '상승') {
+      return '단기·중기 모두 상승세로 추가적인 수위 상승 가능성이 큽니다.';
+    }
+
+    if (shortTerm === '하강' && mediumTerm !== '상승') {
+      return '단기적으로 하강세가 이어져 점진적인 수위 감소가 예상됩니다.';
+    }
+
+    if (longTerm === '상승') {
+      return '30일 장기 추세가 상승 중이므로 계절적 상승 패턴에 주의하세요.';
+    }
+
+    if (longTerm === '하강' && shortTerm !== '상승') {
+      return '장기적으로 하강 추세로 안정적인 저수 관리가 전망됩니다.';
+    }
+
+    return '큰 추세 변화 없이 현 상태가 유지될 가능성이 큽니다.';
+  }
+
+  private generateRecommendation(
+    storageRate: number | null,
+    trends: {
+      shortTerm: '상승' | '하강' | '안정';
+      mediumTerm: '상승' | '하강' | '안정';
+      longTerm: '상승' | '하강' | '안정';
+    },
+  ): string {
+    if (storageRate !== null && storageRate >= 90) {
+      return '방류량 조정 계획과 시설 점검을 사전에 검토하세요.';
+    }
+
+    if (storageRate !== null && storageRate <= 25) {
+      return '생활·농업 용수 확보를 위해 절수 대책 및 비상 공급 계획을 준비하세요.';
+    }
+
+    if (trends.shortTerm === '상승') {
+      return '상류 강우 상황을 집중 모니터링하며 방류 계획을 유연하게 운영하세요.';
+    }
+
+    if (trends.mediumTerm === '하강' && trends.longTerm === '하강') {
+      return '저수량 확보를 위해 필요 시 방류량을 추가로 축소할 여지가 있습니다.';
+    }
+
+    return '정기적인 시계열 분석으로 추세 변화를 지속적으로 관찰하세요.';
   }
 
   private createIntegratedRainfallResponse(
@@ -741,44 +1365,97 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     };
   }
 
-  private parseObsTime(obsTime: string): string {
+  private formatToKoreanTime(timestamp?: string): string {
+    if (!timestamp) return '정보 없음';
+
+    const trimmed = timestamp.trim();
+    if (!trimmed) return '정보 없음';
+
     try {
-      if (!obsTime || obsTime.trim() === '') {
-        return new Date().toLocaleString('ko-KR');
+      if (/^\d{12}$/.test(trimmed)) {
+        const year = trimmed.substring(0, 4);
+        const month = trimmed.substring(4, 6);
+        const day = trimmed.substring(6, 8);
+        const hour = trimmed.substring(8, 10);
+        const minute = trimmed.substring(10, 12);
+        const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:00+09:00`);
+        if (!Number.isNaN(date.getTime())) {
+          return date.toLocaleString('ko-KR', {
+            timeZone: 'Asia/Seoul',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          });
+        }
+      } else {
+        const date = new Date(trimmed);
+        if (!Number.isNaN(date.getTime())) {
+          return date.toLocaleString('ko-KR', {
+            timeZone: 'Asia/Seoul',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true,
+          });
+        }
       }
-
-      if (obsTime.length !== 12 || !/^\d{12}$/.test(obsTime)) {
-        this.logger.warn('Invalid obs_time format', { obsTime });
-        return new Date().toLocaleString('ko-KR');
-      }
-
-      const year = obsTime.slice(0, 4);
-      const month = obsTime.slice(4, 6);
-      const day = obsTime.slice(6, 8);
-      const hour = obsTime.slice(8, 10);
-      const minute = obsTime.slice(10, 12);
-
-      const formattedTime = `${year}-${month}-${day} ${hour}:${minute}`;
-      const date = new Date(formattedTime);
-      if (Number.isNaN(date.getTime())) {
-        this.logger.warn('Invalid date generated from obs_time', { formattedTime });
-        return new Date().toLocaleString('ko-KR');
-      }
-
-      return date.toLocaleString('ko-KR');
     } catch (error) {
-      this.logger.error('obs_time parsing failed', { error: error instanceof Error ? error.message : error });
-      return new Date().toLocaleString('ko-KR');
+      this.logger.warn('formatToKoreanTime failed', {
+        timestamp,
+        error: error instanceof Error ? error.message : error,
+      });
     }
+
+    return trimmed;
   }
 
-  private getRelatedStations(stationName: string): Array<{ name: string; code: string; current_level?: string; status?: string }> {
+  private getStorageStatus(storageRate: number | null): string {
+    if (storageRate === null) return '정보 없음';
+    if (storageRate >= 80) return '🟢 풍부 (80% 이상)';
+    if (storageRate >= 60) return '🟡 보통 (60-79%)';
+    if (storageRate >= 40) return '🟠 주의 (40-59%)';
+    if (storageRate >= 20) return '🔴 부족 (20-39%)';
+    return '🚨 심각 (20% 미만)';
+  }
+
+  private formatCapacity(value: number): string | null {
+    if (!Number.isFinite(value)) return null;
+    if (Number.isInteger(value)) {
+      return value.toLocaleString('ko-KR');
+    }
+    return value.toLocaleString('ko-KR', {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    });
+  }
+
+  private parseObsTime(obsTime: string): string {
+    const formatted = this.formatToKoreanTime(obsTime);
+    if (!formatted || formatted === '정보 없음') {
+      return new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
+    }
+    return formatted;
+  }
+
+  private getRelatedStations(
+    stationName: string,
+    stationCode?: string,
+  ): Array<{ name: string; code: string; current_level?: string; status?: string }> {
+    if (stationCode && DAM_CAPACITY_DATA[stationCode]) {
+      return getWatershedDams(stationCode).map(dam => ({
+        name: dam.name,
+        code: dam.code,
+      }));
+    }
+
     const related: Array<{ name: string; code: string; current_level?: string; status?: string }> = [];
 
-    if (stationName.includes('댐')) {
-      related.push({ name: '소양댐', code: '1010690' });
-      related.push({ name: '충주댐', code: '1003666' });
-    } else if (stationName.includes('대교')) {
+    if (stationName.includes('대교')) {
       related.push({ name: '한강대교', code: '1018683' });
     }
 
@@ -786,28 +1463,197 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
   }
 
   private async fetchWaterLevelSnapshot(): Promise<WaterLevelRecord[]> {
-    const data = await this.request<{ content?: WaterLevelRecord[] }>({ endpoint: 'waterlevel/list.json' });
-    return Array.isArray(data?.content) ? data.content.filter(Boolean) : [];
+    const parsed = await this.requestXml('/waterlevel/list/10M.xml');
+    const items = this.extractItems(parsed);
+    return items
+      .map(item => this.normalizeWaterLevelRecord(item))
+      .filter((record): record is WaterLevelRecord => Boolean(record));
   }
 
   private async fetchRainfallSnapshot(): Promise<RainfallRecord[]> {
-    const data = await this.request<{ content?: RainfallRecord[] }>({ endpoint: 'rainfall/list.json' });
-    return Array.isArray(data?.content) ? data.content.filter(Boolean) : [];
+    const parsed = await this.requestXml('/rainfall/list/10M.xml');
+    const items = this.extractItems(parsed);
+    return items
+      .map(item => this.normalizeRainfallRecord(item))
+      .filter((record): record is RainfallRecord => Boolean(record));
   }
 
   private async fetchDamSnapshots(): Promise<{
     realtime: DamRealtimeRecord[];
     info: DamInfoRecord[];
   }> {
-    const [realtimeRes, infoRes] = await Promise.all([
-      this.request<{ content?: DamRealtimeRecord[] }>({ endpoint: 'dam/list.json' }),
-      this.request<{ content?: DamInfoRecord[] }>({ endpoint: 'dam/info.json' }),
+    const [realtimeParsed, infoParsed] = await Promise.all([
+      this.requestXml('/dam/list/10M.xml'),
+      this.requestXml('/dam/info.xml'),
     ]);
 
+    const realtimeItems = this.extractItems(realtimeParsed);
+    const infoItems = this.extractItems(infoParsed);
+
     return {
-      realtime: Array.isArray(realtimeRes?.content) ? realtimeRes.content.filter(Boolean) : [],
-      info: Array.isArray(infoRes?.content) ? infoRes.content.filter(Boolean) : [],
+      realtime: realtimeItems
+        .map(item => this.normalizeDamRealtimeRecord(item))
+        .filter((record): record is DamRealtimeRecord => Boolean(record)),
+      info: infoItems
+        .map(item => this.normalizeDamInfoRecord(item))
+        .filter((record): record is DamInfoRecord => Boolean(record)),
     };
+  }
+
+  private normalizeDamRealtimeRecord(item: any): DamRealtimeRecord | null {
+    if (!item) return null;
+    const obsCode =
+      item.dmobscd ??
+      item.damObsCd ??
+      item.obsCode ??
+      item.obs_code ??
+      item.obsCd ??
+      '';
+    if (!obsCode) return null;
+
+    return {
+      dmobscd: obsCode,
+      swl: this.formatNumberString(item.swl ?? item.wl ?? item.waterLevel),
+      inf: this.formatNumberString(item.inf ?? item.inflow),
+      tototf: this.formatNumberString(item.tototf ?? item.otf ?? item.outflow),
+      sfw: this.formatNumberString(item.sfw ?? item.fwvol ?? item.currentStorage),
+      ecpc: this.formatNumberString(item.ecpc ?? item.effectiveStorage),
+      ymdhm: this.normalizeTimestamp(item.ymdhm ?? item.obsYmdhm ?? item.obs_time ?? item.timestamp),
+    };
+  }
+
+  private normalizeDamInfoRecord(item: any): DamInfoRecord | null {
+    if (!item) return null;
+    const obsCode =
+      item.dmobscd ??
+      item.damObsCd ??
+      item.obsCode ??
+      item.obs_code ??
+      item.obsCd ??
+      '';
+    if (!obsCode) return null;
+
+    return {
+      dmobscd: obsCode,
+      pfh: this.formatNumberString(item.pfh ?? item.floodControlCapacity),
+      fldlmtwl: this.formatNumberString(item.fldlmtwl ?? item.floodLimitLevel),
+    };
+  }
+
+  private normalizeWaterLevelRecord(item: any): WaterLevelRecord | null {
+    if (!item) return null;
+    const obsCode =
+      item.wlobscd ??
+      item.wlObsCd ??
+      item.obsCode ??
+      item.obs_code ??
+      '';
+    if (!obsCode) return null;
+
+    return {
+      wlobscd: obsCode,
+      wl: this.formatNumberString(item.wl ?? item.swl ?? item.waterLevel),
+      ymdhm: this.normalizeTimestamp(item.ymdhm ?? item.obsYmdhm ?? item.obs_time ?? item.timestamp),
+    };
+  }
+
+  private normalizeRainfallRecord(item: any): RainfallRecord | null {
+    if (!item) return null;
+    const obsCode =
+      item.rfobscd ??
+      item.rfObsCd ??
+      item.obsCode ??
+      item.obs_code ??
+      '';
+    if (!obsCode) return null;
+
+    return {
+      rfobscd: obsCode,
+      rf: this.formatNumberString(item.rf ?? item.rainfall ?? item.currentRainfall),
+      ymdhm: this.normalizeTimestamp(item.ymdhm ?? item.obsYmdhm ?? item.obs_time ?? item.timestamp),
+      obsnm: item.obsnm ?? item.obsName ?? item.rfobsnm ?? item.stationName,
+      rfobsnm: item.rfobsnm ?? item.obsnm ?? item.stationName,
+      rf_sum_1h: this.formatNumberString(item.rf_sum_1h ?? item.hourlyRainfall),
+      rf_sum_24h: this.formatNumberString(item.rf_sum_24h ?? item.dailyRainfall),
+    };
+  }
+
+  private normalizeDamSeriesRecord(item: any): any {
+    if (!item) return null;
+    const obsCode =
+      item.dmobscd ??
+      item.damObsCd ??
+      item.obsCode ??
+      item.obs_code ??
+      '';
+    if (!obsCode) return null;
+
+    return {
+      obsCode,
+      swl: this.safeParseNumber(item.swl ?? item.wl ?? item.waterLevel) ?? 0,
+      otf: this.safeParseNumber(item.tototf ?? item.otf ?? item.outflow) ?? 0,
+      inf: this.safeParseNumber(item.inf ?? item.inflow) ?? 0,
+      fwVol: this.safeParseNumber(item.sfw ?? item.fwvol ?? item.currentStorage),
+      ymdhm: this.normalizeTimestamp(item.ymdhm ?? item.obsYmdhm ?? item.obs_time ?? item.timestamp),
+    };
+  }
+
+  private normalizeWaterLevelSeriesRecord(item: any): any {
+    if (!item) return null;
+    const obsCode =
+      item.wlobscd ??
+      item.wlObsCd ??
+      item.obsCode ??
+      item.obs_code ??
+      '';
+    if (!obsCode) return null;
+
+    return {
+      obsCode,
+      wl: this.safeParseNumber(item.wl ?? item.swl ?? item.waterLevel) ?? 0,
+      ymdhm: this.normalizeTimestamp(item.ymdhm ?? item.obsYmdhm ?? item.obs_time ?? item.timestamp),
+    };
+  }
+
+  private normalizeRainfallSeriesRecord(item: any): any {
+    if (!item) return null;
+    const obsCode =
+      item.rfobscd ??
+      item.rfObsCd ??
+      item.obsCode ??
+      item.obs_code ??
+      '';
+    if (!obsCode) return null;
+
+    return {
+      obsCode,
+      rf: this.safeParseNumber(item.rf ?? item.rainfall ?? item.currentRainfall) ?? 0,
+      ymdhm: this.normalizeTimestamp(item.ymdhm ?? item.obsYmdhm ?? item.obs_time ?? item.timestamp),
+    };
+  }
+
+  private formatNumberString(value: any): string {
+    const parsed = this.safeParseNumber(value);
+    if (parsed === null) return '';
+    return String(parsed);
+  }
+
+  private normalizeTimestamp(value: any): string | undefined {
+    if (!value) return undefined;
+    const trimmed = String(value).trim();
+    if (trimmed === '') return undefined;
+    if (/^\d{12}$/.test(trimmed)) return trimmed;
+
+    const date = new Date(trimmed);
+    if (!Number.isNaN(date.getTime())) {
+      const year = date.getFullYear().toString().padStart(4, '0');
+      const month = (date.getMonth() + 1).toString().padStart(2, '0');
+      const day = date.getDate().toString().padStart(2, '0');
+      const hour = date.getHours().toString().padStart(2, '0');
+      const minute = date.getMinutes().toString().padStart(2, '0');
+      return `${year}${month}${day}${hour}${minute}`;
+    }
+    return trimmed;
   }
 
   private normalizeCode(value?: string | null): string {

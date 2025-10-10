@@ -1,0 +1,98 @@
+openapi: 3.0.0
+info:
+  title: "HRFCO Public Data API"
+  description: "한강홍수통제소(HRFCO)에서 제공하는 수위, 강수량, 댐 관련 공공데이터 API 명세입니다. 실제 테스트를 통해 검증된 최종 버전입니다."
+  version: "3.1.0"
+servers:
+  - url: "https://api.hrfco.go.kr"
+    description: "한강홍수통제소(HRFCO) API 서버"
+
+paths:
+  /{api_key}/{hydro_type}/info.{format}:
+    get:
+      summary: "관측소 정보 조회 (Info)"
+      description: "지정한 종류의 모든 관측소 기본 정보를 조회합니다."
+      operationId: "getObservatoryInfo"
+      parameters:
+        - name: "api_key"
+          in: "path"
+          description: "발급받은 API 인증키"
+          required: true
+          schema:
+            type: "string"
+            example: "52832662-D130-4239-9C5F-730AD3BE6BC6"
+        - name: "hydro_type"
+          in: "path"
+          description: "수문 데이터 종류"
+          required: true
+          schema:
+            type: "string"
+            enum: ["dam", "waterlevel", "rainfall"]
+        - name: "format"
+          in: "path"
+          description: "응답 데이터 형식"
+          required: true
+          schema:
+            type: "string"
+            enum: ["xml", "json"]
+      responses:
+        "200":
+          description: "성공적인 응답 (XML 또는 JSON 형식)"
+          content:
+            application/xml:
+              schema:
+                type: "object"
+            application/json:
+              schema:
+                type: "object"
+
+  /{api_key}/{hydro_type}/list/{time_type}.{format}:
+    get:
+      summary: "수문 데이터 목록 조회 (List)"
+      description: "지정한 종류와 시간 단위에 해당하는 모든 관측소의 최신 데이터를 조회합니다."
+      operationId: "getHydroDataList"
+      parameters:
+        - name: "api_key"
+          in: "path"
+          description: "발급받은 API 인증키"
+          required: true
+          schema:
+            type: "string"
+            example: "52832662-D130-4239-9C5F-730AD3BE6BC6"
+        - name: "hydro_type"
+          in: "path"
+          description: "수문 데이터 종류"
+          required: true
+          schema:
+            type: "string"
+            enum: ["dam", "waterlevel", "rainfall"]
+        - name: "time_type"
+          in: "path"
+          description: "시간 단위"
+          required: true
+          schema:
+            type: "string"
+            enum: ["10M", "1H", "1D"]
+        - name: "format"
+          in: "path"
+          description: "응답 데이터 형식"
+          required: true
+          schema:
+            type: "string"
+            enum: ["xml", "json"]
+        - name: "wlobscd"
+          in: "query"
+          description: "(Optional) 특정 관측소 코드로 필터링 (API 동작상 현재는 무시되는 것으로 보임)"
+          required: false
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "성공적인 응답 (XML 또는 JSON 형식)"
+          content:
+            application/xml:
+              schema:
+                type: "object"
+            application/json:
+              schema:
+                type: "object"

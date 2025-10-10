@@ -14,10 +14,12 @@
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "fast-xml-parser": "^4.4.0",
+    "xml2js": "^0.6.2",
     "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "@types/xml2js": "^0.4.14",
     "typescript": "^5.9.3"
   },
   "engines": {
