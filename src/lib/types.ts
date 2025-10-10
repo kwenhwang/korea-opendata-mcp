@@ -12,6 +12,7 @@ export {
   type WaterLevelResponse,
   type IntegratedResponse,
   type StationType,
+  type RainfallData,
 } from '../apis/types/floodcontrol.types';
 
 export {

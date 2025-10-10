@@ -16,10 +16,11 @@ export default async function health(req: VercelRequest, res: VercelResponse) {
     version: '1.0.0',
     environment: 'vercel',
     features: [
-      '통합 검색 기능 (get_water_info)',
-      'ChatGPT 무한 반복 호출 방지',
-      '실시간 수위 데이터 조회',
-      '관측소 코드 매핑',
+      '실시간 댐 방류량·유입량·저수율 조회',
+      '하천 수위 및 홍수 경보 단계 제공',
+      '전국 강수량·우량 관측 데이터 조회',
+      'ChatGPT 무한 반복 호출 방지 로직',
+      '관측소 코드 자동 매핑 및 통합 분석',
       '아파트 실거래가 조회 (get_realestate_info)'
     ]
   });

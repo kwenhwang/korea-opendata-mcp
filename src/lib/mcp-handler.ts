@@ -73,13 +73,21 @@ export class MCPHandler {
     const tools: MCPTool[] = [
       {
         name: 'get_water_info',
-        description: '관측소 검색 및 실시간 수위 데이터 통합 조회 (ChatGPT 무한 반복 방지용)',
+        description: '한국 댐·수위·강수량 실시간 조회 - 방류량, 유입량, 저수율, 홍수 경보, 우량 데이터 통합 제공',
         inputSchema: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: '검색어 (관측소명, 하천명, 위치)',
+              description:
+                '검색어: 댐명(팔당댐, 소양강댐, 대청댐, 충주댐), 하천명(한강, 낙동강, 금강, 섬진강), 지역명+키워드(서울 비, 청주 수위, 부산 강수량), 방류량·유입량·저수율·홍수 관련 문구 등',
+              examples: [
+                '대청댐 방류량',
+                '팔당댐 저수율',
+                '한강 수위',
+                '서울 강수량',
+                '소양강댐 유입량',
+              ],
             },
           },
           required: ['query'],

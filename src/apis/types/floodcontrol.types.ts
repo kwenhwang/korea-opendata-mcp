@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const StationTypeSchema = z.enum(['dam', 'waterlevel', 'rainfall']);
+
 export const ObservatorySchema = z.object({
   obs_code: z.string(),
   obs_name: z.string(),
@@ -18,6 +20,7 @@ export const ObservatorySchema = z.object({
       flood_control: z.number().optional(),
     })
     .optional(),
+  hydro_type: StationTypeSchema.optional(),
 });
 
 export const WaterLevelDataSchema = z.object({
@@ -42,6 +45,16 @@ export type ObservatoryList = z.infer<typeof ObservatoryListSchema>;
 export type WaterLevelResponse = z.infer<typeof WaterLevelResponseSchema>;
 
 export type StationType = 'dam' | 'waterlevel' | 'rainfall';
+
+export interface RainfallData {
+  stationName: string;
+  stationCode: string;
+  currentRainfall: number;
+  hourlyRainfall: number;
+  dailyRainfall: number;
+  timestamp: string;
+  status: string;
+}
 
 export const STATION_CODE_MAPPING: Record<StationType, Record<string, string>> = {
   dam: {
@@ -136,6 +149,7 @@ export interface IntegratedResponse {
   summary: string;
   direct_answer: string;
   detailed_data: {
+    type?: StationType;
     primary_station: {
       name: string;
       code: string;
@@ -158,6 +172,7 @@ export interface IntegratedResponse {
         risk_level: string;
         flood_limit_level: number;
       };
+      current_rainfall?: string;
     };
     water_level_station?: {
       name: string;
@@ -171,7 +186,7 @@ export interface IntegratedResponse {
       current_level?: string;
       status?: string;
     }>;
+    rainfall_details?: RainfallData;
   };
   timestamp: string;
 }
-

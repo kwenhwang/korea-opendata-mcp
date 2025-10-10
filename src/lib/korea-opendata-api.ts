@@ -2,6 +2,7 @@ import type { Logger } from '../utils/logger';
 import { logger as defaultLogger } from '../utils/logger';
 import { FloodControlAPI, type FloodControlConfig } from '../apis/FloodControlAPI';
 import { RealEstateAPI, type RealEstateConfig } from '../apis/RealEstateAPI';
+import type { StationType } from '../apis/types/floodcontrol.types';
 import type { NormalizedTransaction } from '../apis/types/realestate.types';
 
 export interface KoreaOpenDataClientOptions {
@@ -66,7 +67,7 @@ export class KoreaOpenDataAPIClient {
 
   // Flood control endpoints -------------------------------------------------
 
-  async getObservatories(hydroType?: string) {
+  async getObservatories(hydroType?: StationType) {
     return this.floodControlApi.getObservatories(hydroType);
   }
 
@@ -78,8 +79,12 @@ export class KoreaOpenDataAPIClient {
     return this.floodControlApi.getWaterLevelData(obsCode, timeType);
   }
 
-  async getRainfallData(obsCode: string, timeType?: string) {
-    return this.floodControlApi.getRainfallData(obsCode, timeType);
+  async getRainfallData(obsCode: string) {
+    return this.floodControlApi.getRainfallData(obsCode);
+  }
+
+  async getRainfallStations() {
+    return this.floodControlApi.getRainfallStations();
   }
 
   async getDamData(obsCode: string) {

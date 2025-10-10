@@ -9,6 +9,7 @@ import {
   WaterLevelData,
   STATION_CODE_MAPPING,
   IntegratedResponse,
+  RainfallData,
   type StationType,
 } from './types/floodcontrol.types';
 import { StationManager } from '../lib/station-manager';
@@ -45,6 +46,15 @@ type RainfallRecord = {
   rfobscd: string;
   rf?: string;
   ymdhm?: string;
+  obsnm?: string;
+  obsname?: string;
+  obs_nm?: string;
+  rfobsnm?: string;
+  rf_sum_1h?: string;
+  rf_sum_24h?: string;
+  rf_sum_12h?: string;
+  rf_sum_6h?: string;
+  [key: string]: string | undefined;
 };
 
 type PrimaryStation = IntegratedResponse['detailed_data']['primary_station'];
@@ -125,7 +135,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     return response as T;
   }
 
-  async getObservatories(hydroType: string = 'waterlevel'): Promise<Observatory[]> {
+  async getObservatories(hydroType: StationType = 'waterlevel'): Promise<Observatory[]> {
     const data = await this.request<{ content?: ObservatoryRawRecord[] }>({
       endpoint: `${hydroType}/info.json`,
     });
@@ -151,10 +161,15 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
               flood_control: item.pfh ? parseFloat(item.pfh) : undefined,
             }
           : undefined,
+        hydro_type: hydroType,
       }))
       .filter(obs => obs.obs_code && obs.obs_name);
 
     return observatories;
+  }
+
+  async getRainfallStations(): Promise<Observatory[]> {
+    return this.getObservatories('rainfall');
   }
 
   async getStationList(endpoint: string): Promise<any[]> {
@@ -219,21 +234,15 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     return [result.data];
   }
 
-  async getRainfallData(
-    obsCode: string,
-    timeType: string = '1H',
-    snapshot?: RainfallRecord[],
-  ): Promise<any[]> {
-    void timeType;
-
+  async getRainfallData(obsCode: string, snapshot?: RainfallRecord[]): Promise<RainfallData> {
     const records = snapshot ?? (await this.fetchRainfallSnapshot());
     const result = this.resolveRainfallRecord(records, [obsCode]);
 
     if (!result) {
-      throw new Error(`관측소 ${obsCode}의 강우량 데이터를 찾을 수 없습니다`);
+      throw new Error(`관측소 ${obsCode}의 강수량 데이터를 찾을 수 없습니다`);
     }
 
-    return [result.data];
+    return result.data;
   }
 
   async getDamData(
@@ -261,6 +270,19 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
   async searchAndGetData(query: string): Promise<IntegratedResponse> {
     try {
       const stationManager = StationManager.getInstance(this, { logger: this.logger });
+      
+      // 스마트 키워드 감지: 강수량 관련 키워드가 있으면 우량관측소 우선 검색
+      const rainfallKeywords = ['우량', '강수', '비', '강수량', '강우', 'rainfall'];
+      const isRainfallQuery = rainfallKeywords.some(keyword => query.includes(keyword));
+      
+      // 댐 관련 키워드 감지
+      const damKeywords = ['댐', 'dam'];
+      const isDamQuery = damKeywords.some(keyword => query.includes(keyword));
+      
+      // 수위 관련 키워드 감지
+      const waterLevelKeywords = ['수위', 'waterlevel', 'water level'];
+      const isWaterLevelQuery = waterLevelKeywords.some(keyword => query.includes(keyword));
+
       const searchResults = await stationManager.searchByName(query);
 
       let waterSnapshot: WaterLevelRecord[] | null = null;
@@ -288,20 +310,23 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
         return damSnapshots;
       };
 
-      const rainfallToWaterLevel = (payload: {
-        obs_code: string;
-        obs_time: string;
-        rainfall: number;
-        unit: string;
-      }): WaterLevelData => ({
-        obs_code: payload.obs_code,
-        obs_time: payload.obs_time,
-        water_level: payload.rainfall,
-        unit: payload.unit,
-      });
-
       if (searchResults.length === 0) {
-        if (query.includes('댐')) {
+        // 키워드 기반 우선순위 검색
+        if (isRainfallQuery) {
+          // 강수량 키워드가 있으면 우량관측소 우선 검색
+          const rainfallCodes = this.collectCandidateCodes(query, 'rainfall', query);
+          const rainfallResult = this.resolveRainfallRecord(await getRainfallSnapshot(), rainfallCodes);
+          if (rainfallResult) {
+            return this.createIntegratedRainfallResponse(
+              query,
+              rainfallResult.code,
+              rainfallResult.data,
+            );
+          }
+        }
+        
+        if (isDamQuery) {
+          // 댐 키워드가 있으면 댐 우선 검색
           const [damResult, waterResult] = await Promise.all([
             (async () => {
               const snapshots = await getDamSnapshots();
@@ -315,19 +340,27 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
             })(),
           ]);
 
-          if (!damResult && !waterResult) {
-            return this.createErrorResponse(`'${query}' 관측소 정보를 찾을 수 없습니다.`);
+          if (damResult || waterResult) {
+            return this.createIntegratedDamResponse(
+              query,
+              damResult?.code ?? waterResult?.code ?? '',
+              waterResult?.code ?? damResult?.code ?? '',
+              damResult?.data ?? null,
+              waterResult?.data ?? null,
+            );
           }
-
-          return this.createIntegratedDamResponse(
-            query,
-            damResult?.code ?? waterResult?.code ?? '',
-            waterResult?.code ?? damResult?.code ?? '',
-            damResult?.data ?? null,
-            waterResult?.data ?? null,
-          );
+        }
+        
+        if (isWaterLevelQuery) {
+          // 수위 키워드가 있으면 수위관측소 우선 검색
+          const waterCodes = this.collectCandidateCodes(query, 'waterlevel', query);
+          const waterResult = this.resolveWaterLevelRecord(await getWaterSnapshot(), waterCodes);
+          if (waterResult) {
+            return this.createIntegratedResponse(query, waterResult.code, waterResult.data);
+          }
         }
 
+        // 키워드가 없거나 매칭되지 않으면 기존 순서로 검색
         const waterCodes = this.collectCandidateCodes(query, 'waterlevel', query);
         const waterResult = this.resolveWaterLevelRecord(await getWaterSnapshot(), waterCodes);
         if (waterResult) {
@@ -337,17 +370,20 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
         const rainfallCodes = this.collectCandidateCodes(query, 'rainfall', query);
         const rainfallResult = this.resolveRainfallRecord(await getRainfallSnapshot(), rainfallCodes);
         if (rainfallResult) {
-          return this.createIntegratedResponse(
+          return this.createIntegratedRainfallResponse(
             query,
             rainfallResult.code,
-            rainfallToWaterLevel(rainfallResult.data),
+            rainfallResult.data,
           );
         }
 
         return this.createErrorResponse(`'${query}' 관측소 정보를 찾을 수 없습니다.`);
       }
 
-      for (const station of searchResults) {
+      // 키워드 기반 우선순위로 검색 결과 처리
+      const prioritizedResults = this.prioritizeSearchResults(searchResults, isRainfallQuery, isDamQuery, isWaterLevelQuery);
+      
+      for (const station of prioritizedResults) {
         this.logger.debug('Evaluating station candidate', { station });
 
         if (station.type === 'dam') {
@@ -380,10 +416,10 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
           );
 
           if (rainfallResult) {
-            return this.createIntegratedResponse(
+            return this.createIntegratedRainfallResponse(
               station.name,
               rainfallResult.code,
-              rainfallToWaterLevel(rainfallResult.data),
+              rainfallResult.data,
             );
           }
 
@@ -414,10 +450,10 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
         );
 
         if (rainfallResult) {
-          return this.createIntegratedResponse(
+          return this.createIntegratedRainfallResponse(
             station.name,
             rainfallResult.code,
-            rainfallToWaterLevel(rainfallResult.data),
+            rainfallResult.data,
           );
         }
       }
@@ -480,6 +516,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
       summary: `${stationName} 현재 수위는 ${currentLevel}입니다`,
       direct_answer: `${stationName}의 현재 수위는 ${currentLevel}이며, ${status} 상태입니다.`,
       detailed_data: {
+        type: 'waterlevel',
         primary_station: {
           name: stationName,
           code: stationCode,
@@ -548,12 +585,85 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
       summary: `${damName} 현재 수위는 ${currentLevel}입니다`,
       direct_answer: directAnswer,
       detailed_data: {
+        type: 'dam',
         primary_station: damInfo,
         water_level_station: waterLevelInfo,
         related_stations: this.getRelatedStations(damName),
       },
       timestamp: new Date().toISOString(),
     };
+  }
+
+  private createIntegratedRainfallResponse(
+    fallbackName: string,
+    stationCode: string,
+    rainfall: RainfallData,
+  ): IntegratedResponse {
+    const stationName = rainfall.stationName || fallbackName;
+    const currentRainfall = Number.isFinite(rainfall.currentRainfall)
+      ? rainfall.currentRainfall
+      : 0;
+    const summary = `${stationName} 현재 강수량은 ${currentRainfall.toFixed(1)}mm입니다`;
+    const detailedMessage = this.formatRainfallMessage({
+      ...rainfall,
+      stationName,
+      stationCode,
+    });
+
+    return {
+      status: 'success',
+      summary,
+      direct_answer: detailedMessage,
+      detailed_data: {
+        type: 'rainfall',
+        primary_station: {
+          name: stationName,
+          code: stationCode,
+          current_level: `${currentRainfall.toFixed(1)}mm`,
+          current_rainfall: `${currentRainfall.toFixed(1)}mm`,
+          status: rainfall.status,
+          last_updated: rainfall.timestamp,
+        },
+        related_stations: this.getRelatedStations(stationName),
+        rainfall_details: {
+          ...rainfall,
+          stationName,
+          stationCode,
+        },
+      },
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  private formatRainfallMessage(data: RainfallData): string {
+    const emoji = this.getRainfallEmoji(data.status);
+    return `🌧️ **${data.stationName} 실시간 강수량 정보**\n\n`
+      + `📊 **현재 상태**: ${emoji} ${data.status}\n\n`
+      + '📈 **강수량 현황**:\n'
+      + `-  현재: ${data.currentRainfall.toFixed(1)}mm\n`
+      + `-  1시간 누적: ${data.hourlyRainfall.toFixed(1)}mm\n`
+      + `-  일 누적: ${data.dailyRainfall.toFixed(1)}mm\n\n`
+      + `🕐 **측정시각**: ${data.timestamp}\n\n`
+      + `🔗 **관측소 코드**: ${data.stationCode}`;
+  }
+
+  private getRainfallEmoji(status: string): string {
+    const mapping: Record<string, string> = {
+      강수없음: '☀️',
+      약한비: '🌦️',
+      보통비: '🌧️',
+      강한비: '⛈️',
+      매우강한비: '🌩️',
+    };
+    return mapping[status] ?? '🌧️';
+  }
+
+  private getRainfallStatus(rainfall: number): string {
+    if (!Number.isFinite(rainfall) || rainfall <= 0) return '강수없음';
+    if (rainfall < 1) return '약한비';
+    if (rainfall < 3) return '보통비';
+    if (rainfall < 5) return '강한비';
+    return '매우강한비';
   }
 
   private createErrorResponse(message: string): IntegratedResponse {
@@ -704,6 +814,51 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     return (value ?? '').trim();
   }
 
+  /**
+   * 키워드 기반으로 검색 결과 우선순위 정렬
+   */
+  private prioritizeSearchResults(
+    searchResults: Array<{ type: string; name: string; code: string }>,
+    isRainfallQuery: boolean,
+    isDamQuery: boolean,
+    isWaterLevelQuery: boolean
+  ): Array<{ type: string; name: string; code: string }> {
+    if (isRainfallQuery) {
+      // 강수량 키워드가 있으면 우량관측소 우선
+      return searchResults.sort((a, b) => {
+        if (a.type === 'rainfall' && b.type !== 'rainfall') return -1;
+        if (a.type !== 'rainfall' && b.type === 'rainfall') return 1;
+        return 0;
+      });
+    }
+    
+    if (isDamQuery) {
+      // 댐 키워드가 있으면 댐 우선
+      return searchResults.sort((a, b) => {
+        if (a.type === 'dam' && b.type !== 'dam') return -1;
+        if (a.type !== 'dam' && b.type === 'dam') return 1;
+        return 0;
+      });
+    }
+    
+    if (isWaterLevelQuery) {
+      // 수위 키워드가 있으면 수위관측소 우선
+      return searchResults.sort((a, b) => {
+        if (a.type === 'waterlevel' && b.type !== 'waterlevel') return -1;
+        if (a.type !== 'waterlevel' && b.type === 'waterlevel') return 1;
+        return 0;
+      });
+    }
+    
+    // 키워드가 없으면 기존 순서 유지 (dam → rainfall → waterlevel)
+    return searchResults.sort((a, b) => {
+      const typeOrder = { dam: 0, rainfall: 1, waterlevel: 2 };
+      const aOrder = typeOrder[a.type as keyof typeof typeOrder] ?? 3;
+      const bOrder = typeOrder[b.type as keyof typeof typeOrder] ?? 3;
+      return aOrder - bOrder;
+    });
+  }
+
   private collectCandidateCodes(
     stationName: string,
     type: StationType,
@@ -734,6 +889,22 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     }
 
     return Array.from(candidates);
+  }
+
+  private parseRainfallValue(record: RainfallRecord, keys: string[], fallback = Number.NaN): number {
+    for (const key of keys) {
+      if (!(key in record)) continue;
+      const raw = record[key];
+      if (raw === undefined || raw === null) continue;
+      const trimmed = String(raw).trim();
+      if (trimmed === '') continue;
+      const value = parseFloat(trimmed);
+      if (!Number.isNaN(value)) {
+        return value;
+      }
+    }
+
+    return fallback;
   }
 
   private resolveWaterLevelRecord(
@@ -767,24 +938,48 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
   private resolveRainfallRecord(
     snapshot: RainfallRecord[],
     codes: string[],
-  ): { code: string; data: { obs_code: string; obs_time: string; rainfall: number; unit: string } } | null {
+  ): { code: string; data: RainfallData } | null {
     for (const code of codes) {
       const normalized = this.normalizeCode(code);
       const record = snapshot.find(item => this.normalizeCode(item.rfobscd) === normalized);
       if (!record) continue;
 
-      const rainfall = record.rf ? parseFloat(record.rf) : NaN;
-      if (Number.isNaN(rainfall)) {
+      const currentRainfall = this.parseRainfallValue(record, ['rf', 'rainfall', 'rf_now']);
+      if (Number.isNaN(currentRainfall)) {
         continue;
       }
+
+      const hourlyRainfall = this.parseRainfallValue(
+        record,
+        ['rfSum1h', 'rfsum1h', 'rf1h', 'rf_1h', 'rf_hour', 'rf_sum_1h', 'rnhr1', 'rf1Hour'],
+        0,
+      );
+      const dailyRainfall = this.parseRainfallValue(
+        record,
+        ['rfSum1d', 'rfsum1d', 'rf1d', 'rf_1d', 'rf_day', 'rf_sum_24h', 'rn24h', 'rfDaily'],
+        0,
+      );
+      const stationName = record.obsnm
+        || record.rfobsnm
+        || record.obsname
+        || record.obs_nm
+        || `우량관측소_${normalized}`;
+
+      const timestamp = record.ymdhm && /^\d{12}$/.test(record.ymdhm)
+        ? this.parseObsTime(record.ymdhm)
+        : new Date().toLocaleString('ko-KR');
+      const status = this.getRainfallStatus(currentRainfall);
 
       return {
         code: normalized,
         data: {
-          obs_code: normalized,
-          obs_time: record.ymdhm || new Date().toISOString(),
-          rainfall,
-          unit: 'mm',
+          stationName,
+          stationCode: normalized,
+          currentRainfall: Number.isNaN(currentRainfall) ? 0 : currentRainfall,
+          hourlyRainfall,
+          dailyRainfall,
+          timestamp,
+          status,
         },
       };
     }

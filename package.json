@@ -1,7 +1,7 @@
 {
   "name": "korea-opendata-mcp",
   "version": "1.0.0",
-  "description": "Korea OpenData MCP Server in TypeScript",
+  "description": "Korea Water Data MCP Server - 한국 댐 방류량·수위·강수량 실시간 조회",
   "main": "api/mcp.js",
   "scripts": {
     "dev": "vercel dev",

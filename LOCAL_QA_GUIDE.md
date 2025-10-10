@@ -127,7 +127,7 @@ curl -X POST http://localhost:8888/.netlify/functions/mcp \
 - 5개 도구 반환 (tools 배열)
 - 각 도구에 name, description, inputSchema 포함
 
-### TC_002: 통합 검색 (get_water_info)
+### TC_002: 댐·수위·강수량 통합 조회 (get_water_info)
 **우선순위**: 높음
 ```bash
 curl -X POST http://localhost:8888/.netlify/functions/mcp \
@@ -144,6 +144,7 @@ curl -X POST http://localhost:8888/.netlify/functions/mcp \
 ```
 
 **성공 기준:**
+- 응답 요약에 방류량/유입량/저수율 혹은 수위/강수량 핵심 지표 포함
 - 'Invalid Date' 미표시
 - 정상적인 날짜 형식 (예: "2025. 10. 2. 오후 12:57:54")
 - 관련 관측소 정보 포함

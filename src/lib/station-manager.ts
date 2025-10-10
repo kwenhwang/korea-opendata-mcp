@@ -26,6 +26,7 @@ export class StationManager {
   private cacheDuration: number;
   private logger: Logger;
   private client: StationApiClient;
+  private static readonly SEARCH_STOPWORDS = ['우량', '강수', '강우', '비', '관측소', '수위', '정보', '실시간', '조회', '데이터', '측정', '홍수', '댐', '대교'];
 
   private constructor(client: StationApiClient, options: StationManagerOptions = {}) {
     this.client = client;
@@ -110,32 +111,38 @@ export class StationManager {
    * 이름으로 관측소 검색
    */
   async searchByName(query: string, type?: 'waterlevel' | 'rainfall' | 'dam'): Promise<StationInfo[]> {
+    const trimmedQuery = (query ?? '').trim();
+    const normalizedQuery = this.normalizeSearchText(trimmedQuery);
     await this.fetchAllStations();
-    
+
     const results: StationInfo[] = [];
     const searchTypes = type ? [type] : ['waterlevel', 'rainfall', 'dam'] as const;
-    
+
     for (const searchType of searchTypes) {
       const stations = this.stationCache.get(searchType) || [];
-      
+
       // 정확한 매칭 우선
-      const exactMatches = stations.filter(station => 
-        station.name === query
+      const exactMatches = stations.filter(station =>
+        station.name === trimmedQuery
+        || this.normalizeSearchText(station.name) === normalizedQuery
       );
-      
+
       if (exactMatches.length > 0) {
         results.push(...exactMatches);
-        continue;
       }
-      
+
+      const exactMatchCodes = new Set(exactMatches.map(item => item.code));
+
       // 부분 매칭
       const partialMatches = stations.filter(station => 
-        (station.name && station.name.includes(query)) || 
-        (station.name && query.includes(station.name)) ||
-        (station.location && station.location.includes(query)) ||
-        (station.river_name && station.river_name.includes(query))
+        !exactMatchCodes.has(station.code)
+        && (
+          this.partialMatch(station.name, trimmedQuery, normalizedQuery)
+        || this.partialMatch(station.location, trimmedQuery, normalizedQuery)
+        || this.partialMatch(station.river_name, trimmedQuery, normalizedQuery)
+        )
       );
-      
+
       results.push(...partialMatches);
     }
     
@@ -169,5 +176,43 @@ export class StationManager {
   async refreshCache(): Promise<void> {
     this.lastFetchTime = 0;
     await this.fetchAllStations();
+  }
+
+  private normalizeSearchText(value?: string | null): string {
+    if (!value) return '';
+    let normalized = value
+      .replace(/\s+/g, '')
+      .replace(/[()\[\]{}]/g, '')
+      .replace(/-/g, '')
+      .toLowerCase();
+
+    for (const keyword of StationManager.SEARCH_STOPWORDS) {
+      if (!keyword) continue;
+      normalized = normalized.replace(new RegExp(keyword.toLowerCase(), 'g'), '');
+    }
+
+    return normalized;
+  }
+
+  private partialMatch(
+    source?: string | null,
+    rawQuery?: string,
+    normalizedQuery?: string,
+  ): boolean {
+    if (!source) return false;
+    const normalizedSource = this.normalizeSearchText(source);
+    const trimmedQuery = rawQuery ?? '';
+    const normalized = normalizedQuery ?? '';
+
+    const hasRaw = trimmedQuery.length > 0;
+    const hasNormalized = normalized.length > 0;
+    if (!hasRaw && !hasNormalized) return false;
+
+    return (
+      (hasRaw && source.includes(trimmedQuery))
+      || (hasRaw && trimmedQuery.includes(source))
+      || (hasNormalized && normalizedSource.includes(normalized))
+      || (hasNormalized && normalized.includes(normalizedSource))
+    );
   }
 }

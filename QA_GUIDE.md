@@ -37,7 +37,7 @@
     },
     {
       "name": "get_water_info",
-      "description": "관측소 검색 및 실시간 수위 데이터 통합 조회 (ChatGPT 무한 반복 방지용)",
+      "description": "한국 댐, 수위관측소, 우량관측소 실시간 데이터 조회 - 방류량, 유입량, 저수율, 수위, 강수량 등 종합 정보 제공",
       "parameters": ["query"]
     }
   ]

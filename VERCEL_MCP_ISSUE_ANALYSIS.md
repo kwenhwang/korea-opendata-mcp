@@ -24,7 +24,7 @@ curl -X POST https://hrfco-mcp-lctuob0og-kewns-projects.vercel.app/api/mcp \
       {"name": "get_rainfall", "description": "실시간 강우량 데이터 조회"},
       {"name": "get_observatory_list", "description": "관측소 목록 조회"},
       {"name": "search_observatory", "description": "관측소 검색"},
-      {"name": "get_water_info", "description": "관측소 검색 및 실시간 수위 데이터 통합 조회"}
+      {"name": "get_water_info", "description": "한국 댐·수위·강수량 실시간 조회 - 방류량, 유입량, 저수율, 수위, 강수량 등 통합 제공"}
     ]
   }
 }

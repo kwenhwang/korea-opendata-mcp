@@ -46,7 +46,7 @@ curl -s https://hrfco-mcp-functions.netlify.app/.netlify/functions/health | jq .
 
 | 도구 이름 | 설명 | 권장 우선순위 |
 |-----------|------|---------------|
-| `get_water_info` | 관측소 검색 + 실시간 데이터 통합 조회 | ⭐⭐⭐⭐⭐ |
+| `get_water_info` | 한국 댐·수위·강수량 실시간 조회 (방류량, 유입량, 저수율, 수위, 강수량) | ⭐⭐⭐⭐⭐ |
 | `get_water_level` | 특정 관측소 수위 데이터 조회 | ⭐⭐⭐⭐ |
 | `get_rainfall` | 특정 관측소 강우량 데이터 조회 | ⭐⭐⭐⭐ |
 | `search_observatory` | 관측소 검색 (이름/위치 기반) | ⭐⭐⭐ |
@@ -54,13 +54,13 @@ curl -s https://hrfco-mcp-functions.netlify.app/.netlify/functions/health | jq .
 
 ### 도구 상세 스펙
 
-#### 1. `get_water_info` - 통합 검색 및 데이터 조회
-**설명**: 관측소명을 검색하고 실시간 데이터를 함께 반환하는 통합 도구
+#### 1. `get_water_info` - 한국 댐·수위·강수량 통합 조회
+**설명**: 팔당댐·대청댐 등 댐 방류량/유입량/저수율과 한강 수위, 전국 강수량을 실시간으로 통합 제공
 
 **입력 파라미터:**
 ```json
 {
-  "query": "관측소명 또는 지역명"
+  "query": "댐명/하천명/지역명+키워드 (예: 대청댐 방류량, 한강 수위, 서울 비)"
 }
 ```
 

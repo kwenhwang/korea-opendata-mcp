@@ -10,6 +10,18 @@ if (!process.env.PUBLIC_DATA_API_KEY) {
   console.warn('⚠️ PUBLIC_DATA_API_KEY 환경변수가 설정되지 않았습니다. 일부 공공데이터포털 연동이 동작하지 않을 수 있습니다.');
 }
 
+const toolsMetadata = {
+  name: 'Korea Water Data MCP',
+  description: '한국 수자원 통합 정보 시스템 - 댐 방류량, 수위 모니터링, 강수량 실시간 조회',
+  capabilities: [
+    '실시간 댐 정보: 방류량, 유입량, 저수율, 저수량',
+    '하천 수위 및 홍수 경보 단계 모니터링',
+    '전국 강수량·우량 관측 데이터 수집',
+    '주요 댐: 팔당댐, 소양강댐, 대청댐, 충주댐 등 지원',
+    '주요 하천: 한강, 낙동강, 금강, 섬진강 등 지원',
+  ],
+};
+
 const mcpHandler = new MCPHandler();
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -35,12 +47,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         mcp: '/api/mcp',
         health: '/api/health',
       },
+      toolsMetadata,
       features: [
-        '통합 검색 기능 (get_water_info)',
-        'ChatGPT 무한 반복 호출 방지',
-        '실시간 수위 데이터 조회',
-        '관측소 코드 매핑',
-        '아파트 실거래가 조회 (get_realestate_info)'
+        '실시간 댐 방류량·유입량·저수율 조회',
+        '하천 수위 및 홍수 경보 단계 제공',
+        '전국 강수량·우량 관측 데이터 조회',
+        'ChatGPT 무한 반복 호출 방지 로직',
+        '관측소 코드 자동 매핑 및 통합 분석',
+        '아파트 실거래가 조회 (get_realestate_info)',
       ]
     });
     return;
