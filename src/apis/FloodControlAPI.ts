@@ -23,6 +23,7 @@ import {
 import { TimeSeriesAnalyzer } from './utils/timeSeriesAnalyzer';
 
 const DEFAULT_BASE_URL = 'https://api.hrfco.go.kr';
+const DAM_CACHE_TTL = 5 * 60 * 1000; // 5분 캐시
 
 export interface FloodControlConfig extends APIConfig {}
 
@@ -91,6 +92,8 @@ type ObservatoryRawRecord = {
 };
 
 export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRawResponse> {
+  private damDataCache = new Map<string, { expires: number; data: any[] }>();
+
   constructor(overrides: Partial<FloodControlConfig> = {}, logger: Logger = defaultLogger) {
     const resolvedKey = overrides.apiKey ?? process.env.HRFCO_API_KEY;
 
@@ -324,7 +327,19 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
   async getDamData(
     obsCode: string,
     snapshots?: { realtime: DamRealtimeRecord[]; info: DamInfoRecord[] },
+    useCache = true,
   ): Promise<any[]> {
+    const now = Date.now();
+    const bucket = Math.floor(now / DAM_CACHE_TTL);
+    const cacheKey = `${obsCode}_${bucket}`;
+
+    if (!snapshots && useCache) {
+      const cached = this.damDataCache.get(cacheKey);
+      if (cached && cached.expires > now) {
+        return cached.data;
+      }
+    }
+
     const damSnapshots = snapshots ?? (await this.fetchDamSnapshots());
     const result = this.resolveDamRecord(damSnapshots, [obsCode]);
 
@@ -332,7 +347,16 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
       throw new Error(`댐 ${obsCode}의 데이터를 찾을 수 없습니다`);
     }
 
-    return [result.data];
+    const data = [result.data];
+
+    if (!snapshots && useCache) {
+      this.damDataCache.set(cacheKey, {
+        expires: bucket * DAM_CACHE_TTL + DAM_CACHE_TTL,
+        data,
+      });
+    }
+
+    return data;
   }
 
   async getDamTimeSeries(timeType: '10M' | '1H' | '1D' = '1H'): Promise<any[]> {
@@ -394,6 +418,8 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
       // 수위 관련 키워드 감지
       const waterLevelKeywords = ['수위', 'waterlevel', 'water level'];
       const isWaterLevelQuery = waterLevelKeywords.some(keyword => query.includes(keyword));
+
+      const quickMode = this.isQuickQuery(query);
 
       const searchResults = await stationManager.searchByName(query);
 
@@ -459,6 +485,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
               waterResult?.code ?? damResult?.code ?? '',
               damResult?.data ?? null,
               waterResult?.data ?? null,
+              { quickMode },
             );
           }
         }
@@ -515,6 +542,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
               waterResult?.code ?? damResult?.code ?? station.code,
               damResult?.data ?? null,
               waterResult?.data ?? null,
+              { quickMode },
             );
           }
 
@@ -699,7 +727,9 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     waterLevelCode: string,
     damData: any,
     waterLevelData: any,
+    options: { quickMode?: boolean } = {},
   ): Promise<IntegratedResponse> {
+    const { quickMode = false } = options;
     const primaryData = damData ?? waterLevelData ?? null;
     const waterLevelValue = Number.isFinite(primaryData?.water_level)
       ? primaryData.water_level
@@ -781,18 +811,30 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
         ? `${damName} ${summaryParts.join(', ')}`
         : `${damName} 현재 수위는 ${currentLevel}입니다`;
 
-    const directAnswer = await this.buildDamNarrative({
-      damName,
-      damCode,
-      waterLevel: waterLevelValue,
-      inflowRate: inflowValue,
-      outflowRate: outflowValue,
-      currentStorage: currentStorageValue,
-      storageRate: storageRateValue,
-      observationTime,
-      relatedDamNames,
-      watershedLabel,
-    });
+    const isoTimestamp = this.obsTimeToISOString(observationTime) ?? new Date().toISOString();
+
+    const directAnswer = quickMode
+      ? this.formatQuickResponse({
+          damName,
+          waterLevel: waterLevelValue,
+          outflow: outflowValue,
+          inflow: inflowValue,
+          storageRate: storageRateValue,
+          currentStorage: currentStorageValue,
+          observationTime,
+        })
+      : await this.buildDamNarrative({
+          damName,
+          damCode,
+          waterLevel: waterLevelValue,
+          inflowRate: inflowValue,
+          outflowRate: outflowValue,
+          currentStorage: currentStorageValue,
+          storageRate: storageRateValue,
+          observationTime,
+          relatedDamNames,
+          watershedLabel,
+        });
 
     const fallbackRelated = this.getRelatedStations(damName, damCode);
     const combinedRelated =
@@ -810,9 +852,7 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
         water_level_station: waterLevelInfo,
         related_stations: combinedRelated,
       },
-      timestamp: formattedTimestamp !== '정보 없음'
-        ? formattedTimestamp
-        : new Date().toISOString(),
+      timestamp: isoTimestamp,
     };
   }
 
@@ -1218,6 +1258,63 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     return '정기적인 시계열 분석으로 추세 변화를 지속적으로 관찰하세요.';
   }
 
+  private formatQuickResponse({
+    damName,
+    waterLevel,
+    outflow,
+    inflow,
+    storageRate,
+    currentStorage,
+    observationTime,
+  }: {
+    damName: string;
+    waterLevel: number | null;
+    outflow: number | null;
+    inflow: number | null;
+    storageRate: number | null;
+    currentStorage: number | null;
+    observationTime?: string;
+  }): string {
+    const outflowText = this.formatMaybeNumber(outflow, ' m³/s');
+    const inflowText = this.formatMaybeNumber(inflow, ' m³/s');
+    const waterLevelText = this.formatMaybeNumber(waterLevel, 'm');
+    const storageRateText = storageRate !== null ? `${storageRate}%` : '정보 없음';
+    const storageVolumeText = this.formatMaybeNumber(currentStorage, ' 백만㎥');
+    const statusText = this.getStorageStatus(storageRate);
+    const timeText = this.formatToKoreanTime(observationTime);
+
+    return [
+      `🌊 ${damName} 현재 현황`,
+      '',
+      '📊 실시간 데이터',
+      '',
+      `방류량: ${outflowText}`,
+      `유입량: ${inflowText}`,
+      `저수율: ${storageRateText}`,
+      `수위: ${waterLevelText}`,
+      `저수량: ${storageVolumeText}`,
+      `상태: ${statusText}`,
+      '',
+      `🕐 측정시각: ${timeText}`,
+      '💡 상세 분석이 필요하면 "자세히" 또는 "분석"이라고 요청하세요.',
+    ].join('\n');
+  }
+
+  private isQuickQuery(rawQuery: string): boolean {
+    if (!rawQuery) return false;
+    const normalized = rawQuery.trim();
+    if (!normalized) return false;
+
+    const lower = normalized.toLowerCase();
+    const avoidKeywords = ['분석', 'trend', '자세히', '상세', 'forecast', '패턴'];
+    if (avoidKeywords.some(keyword => lower.includes(keyword))) {
+      return false;
+    }
+
+    const quickKeywords = ['방류량', '수위', '현황', '몇', '얼마', '댐'];
+    return quickKeywords.some(keyword => normalized.includes(keyword));
+  }
+
   private createIntegratedRainfallResponse(
     fallbackName: string,
     stationCode: string,
@@ -1412,6 +1509,31 @@ export class FloodControlAPI extends BaseAPI<FloodControlConfig, FloodControlRaw
     }
 
     return trimmed;
+  }
+
+  private obsTimeToISOString(timestamp?: string): string | null {
+    if (!timestamp) return null;
+    const trimmed = timestamp.trim();
+    if (!trimmed) return null;
+
+    if (/^\d{12}$/.test(trimmed)) {
+      const year = trimmed.substring(0, 4);
+      const month = trimmed.substring(4, 6);
+      const day = trimmed.substring(6, 8);
+      const hour = trimmed.substring(8, 10);
+      const minute = trimmed.substring(10, 12);
+      const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:00+09:00`);
+      if (!Number.isNaN(date.getTime())) {
+        return date.toISOString();
+      }
+    }
+
+    const parsed = new Date(trimmed);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString();
+    }
+
+    return null;
   }
 
   private getStorageStatus(storageRate: number | null): string {
